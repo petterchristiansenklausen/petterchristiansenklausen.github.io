@@ -7,6 +7,8 @@ Bruksvilkår (Terms of Use)
    • Oppsigelse: “Du kan si opp når som helst via Innstillinger → Apple‑ID → Abonnementer”  
    • Kjøp/kvitteringer: “Kjøp håndteres av Apple. Refusjoner behandles via Apple på reportaproblem.apple.com”  
    • Family Sharing: “Tilgjengelig for både abonnement og livstid (hvis aktivert)”  
-   • Kontaktinformasjon  
+   • Kontaktinformasjon:
+   Petter Christiansen Klausen
+   epost: hannevika@hotmail.com
    • Dato for siste oppdatering  
-   • Valgfritt: henvisning til Apple’s Standard Licensed Application EULA: [https://www.apple.com/legal/internet-services/itunes/dev/stdeula/](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/)  
+   • Henvisning til Apple’s Standard Licensed Application EULA: [https://www.apple.com/legal/internet-services/itunes/dev/stdeula/](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/)  
