@@ -13,7 +13,7 @@ Kontakt oss
   
 Vanlige spørsmål (FAQ)  
 • Hvordan kjøper jeg Pro?  
-   • Åpne appen → Paywall/Kjøpssiden (f.eks. via Innstillinger → Kjøp Pro) → velg Månedlig eller Livstid → følg instruksjonene.  
+   • Åpne appen → Paywall/Kjøpssiden (f.eks. via Innstillinger → Kjøp Pro) → velg Månedlig eller Årlig → følg instruksjonene.  
 • Hvordan gjenoppretter jeg kjøp?  
    • Åpne kjøpssiden → trykk “Gjenopprett kjøp”. Bruk samme Apple‑ID som da du kjøpte.  
 • Jeg ser ikke priser på kjøpssiden  
@@ -53,9 +53,7 @@ Personvern og vilkår
 • Henvisning til Apple’s betalingsprosess for IAP  
 • Oppsigelse/fornyelse (abonnement), ansvar, gjeldende lov (Norge) og kontakt  
   
-App‑gjennomgang:  
-For testere/gjennomgang: Åpne appen → Innstillinger → Kjøp Pro. Der ser dere både “Kjøp” og “Gjenopprett kjøp”. Ingen innlogging kreves.  
   
 Lisens og kreditering (valgfritt)  
-• © 2025 Ditt Navn / Ditt Selskap  
-• Kontakt: [support@dittdomene.no](mailto:support@dittdomene.no)  
+• © 2025 Petter Christiansen Klausen  
+• Kontakt: [hannevika@hotmail.com](mailto:hannevika@hotmail.com)  
