@@ -10,5 +10,5 @@ Bruksvilkår (Terms of Use)
    • Kontaktinformasjon:
    Petter Christiansen Klausen
    epost: hannevika@hotmail.com
-   • Dato for siste oppdatering: 28.10.25 
+   • Dato for siste oppdatering: 29.10.25 
    • Henvisning til Apple’s Standard Licensed Application EULA: [https://www.apple.com/legal/internet-services/itunes/dev/stdeula/](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/)  
