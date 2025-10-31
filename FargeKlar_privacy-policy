@@ -14,9 +14,11 @@ Denne erklæringen forklarer hvilke data FargeKlar behandler, hvorfor, og hvilke
 • Tekniske data: Enhets- og systeminformasjon kan behandles av Apple i forbindelse med iCloud/CloudKit, App Store og systemtjenester.
 
 2. Hvordan data lagres og behandles
+
 • Lokalt: Data lagres lokalt på enheten for at appen skal fungere.
 • Sky (valgfritt): Dersom du har aktivert iCloud/CloudKit på enheten, kan prosjektdata speiles i din private iCloud-konto. Apple håndterer sikkerheten og tilgangen til iCloud-data i henhold til sine vilkår.
 • Nettbilder: Når du velger å hente inn nettbilder, lastes disse direkte fra kilden. Appen filtrerer/avviser usikre lenker (kun https) for å beskytte deg og oppfylle plattformkrav.
+• Vi lagrer en dato i enhetens Keychain for å starte og spore den lokale 14‑dagers prøveperioden. Denne informasjonen deles ikke med tredjeparter.
 
 3. Formål
 • Data brukes kun til appens kjernefunksjoner: å lage, redigere og eksportere fargeleggingsark, samt forbedring av brukeropplevelse og pålitelighet.
@@ -44,10 +46,14 @@ Denne erklæringen forklarer hvilke data FargeKlar behandler, hvorfor, og hvilke
 9. Lagringstid
 • Data lagres så lenge du bruker appen og ikke sletter dem. iCloud-data lagres i din konto til du selv fjerner dem.
 
-10. Endringer i denne erklæringen
+10. Kjøp   
+• Vi lagrer en dato i enhetens Keychain for å starte og spore den lokale 14‑dagers prøveperioden. Denne informasjonen deles ikke med tredjeparter.
+• Kjøp håndteres av Apple (StoreKit). Vi mottar ikke betalingsdata.
+
+11. Endringer i denne erklæringen
 • Vi kan oppdatere erklæringen ved behov. Vesentlige endringer varsles i appen eller på nettsiden.
 
-11. Kontakt
+12. Kontakt
 • Spørsmål om personvern kan rettes til:
 E-post: hannevika@hotmail.com
 Nett: https://petterchristiansenklausen.github.io/FargeKlar_privacy-policy
