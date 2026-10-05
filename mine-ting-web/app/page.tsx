@@ -368,8 +368,8 @@ function HomeView({locations,selectedPlace,setSelectedPlaceID,placeItems,totalVa
       <button className="circleTopButton" onClick={openPlace}>＋</button>
     </div>
     <h1 className="mineTitle">Mine Ting</h1>
-    <div className="placeScroller" role="list">{locations.map(place=>{const selected=place.id===selectedPlace.id;return <button className="placeChoice" key={place.id} onClick={()=>setSelectedPlaceID(place.id)}><div className="placeAvatar small">{place.image?<img src={place.image} alt=""/>:<span>{place.icon||"⌂"}</span>}{selected&&<b className="checkDot">✓</b>}</div><span className={selected?"selectedText":""}>{place.name}</span></button>})}</div>
-    <section className="profileCard glassCard"><div className="placeAvatar large">{selectedPlace.image?<img src={selectedPlace.image} alt=""/>:<span>{selectedPlace.icon||"⌂"}</span>}</div><div className="profileText"><h2>{selectedPlace.name}</h2><p>{selectedPlace.kind||selectedPlace.detail||"Sted"}</p><p>{placeItems.length} ting</p></div><button className="editCircle" onClick={()=>setView("places")}>✎</button></section>
+    <div className="placeScroller" role="list">{locations.map(place=>{const selected=place.id===selectedPlace.id;return <button className="placeChoice" key={place.id} onClick={()=>setSelectedPlaceID(place.id)}><div className="placeAvatar small">{place.image?<img src={place.image} alt=""/>:<span>{placeIconForWeb(place)}</span>}{selected&&<b className="checkDot">✓</b>}</div><span className={selected?"selectedText":""}>{place.name}</span></button>})}</div>
+    <section className="profileCard glassCard"><div className="placeAvatar large">{selectedPlace.image?<img src={selectedPlace.image} alt=""/>:<span>{placeIconForWeb(selectedPlace)}</span>}</div><div className="profileText"><h2>{selectedPlace.name}</h2><p>{selectedPlace.kind||selectedPlace.detail||"Sted"}</p><p>{placeItems.length} ting</p></div><button className="editCircle" onClick={()=>setView("places")}>✎</button></section>
     <div className="identityStrip"><span>⌂ {selectedPlace.kind||selectedPlace.detail||"Sted"}</span>{account&&<span>☁ {cloudLabel(cloudState)}</span>}{selectedPlace.note&&<span>▤ Notat</span>}</div>
     <div className="sectionHeader"><h2>Hjemmekort</h2><button className={isCustomizing?"prominentSmall":"borderedSmall"} onClick={()=>setIsCustomizing(!isCustomizing)}>{isCustomizing?"Ferdig":"☷ Tilpass"}</button></div>
     {isCustomizing&&<p className="helperText">Hold og dra kortene for å endre rekkefølge. Bruk øyet for å skjule kort du ikke trenger.</p>}
@@ -378,6 +378,32 @@ function HomeView({locations,selectedPlace,setSelectedPlaceID,placeItems,totalVa
     <div className="statsThree"><StatCard label="Understeder" value="0" symbol="▦"/><StatCard label="Til salgs" value={String(forSaleCount)} symbol="◇"/><StatCard label="Utlånt" value={String(loanedCount)} symbol="♙"/></div>
     <section className="recentSection"><div className="sectionHeader"><h2>Nylig registrert</h2><button className="plainLink" onClick={()=>setView("items")}>Vis alle</button></div><div className="recentCard glassCard">{recent.length===0?<p className="emptyLine">Ingen ting er registrert på dette stedet ennå.</p>:recent.map((item,index)=><button className="recentRow" key={item.id} onClick={()=>setView("items")}><Thumbnail item={item}/><span className="recentText"><b>{item.name}</b><small>{item.brand||item.category}</small></span><span className="chevron">›</span>{index<recent.length-1&&<i/>}</button>)}</div></section>
   </div>;
+}
+function placeIconForWeb(place?:Pick<Location,"icon"|"kind"|"detail">){
+  const raw=String(place?.icon||"").trim();
+  const kind=String(place?.kind||place?.detail||"").toLowerCase();
+  const exact:Record<string,string>={
+    "house":"⌂","house.fill":"⌂","building.2":"⌂","building.2.fill":"⌂",
+    "door.left.hand.open":"🚪","door.right.hand.open":"🚪","door.left.hand.closed":"🚪","door.right.hand.closed":"🚪",
+    "mappin":"⌖","mappin.circle":"⌖","mappin.circle.fill":"⌖","mappin.and.ellipse":"⌖",
+    "car":"▣","car.fill":"▣","car.side":"▣","car.side.fill":"▣",
+    "archivebox":"▦","archivebox.fill":"▦","shippingbox":"▦","shippingbox.fill":"▦",
+    "cabinet":"▤","cabinet.fill":"▤","tray.full":"▤","tray.full.fill":"▤",
+    "square.grid.2x2":"▦","square.grid.2x2.fill":"▦","books.vertical":"▤","books.vertical.fill":"▤"
+  };
+  if(exact[raw])return exact[raw];
+  // Web-created symbols/emojis are already display-ready.
+  if(raw && raw.length<=4 && !raw.includes("."))return raw;
+  const lower=raw.toLowerCase();
+  if(lower.includes("door"))return "🚪";
+  if(lower.includes("car")||lower.includes("garage"))return "▣";
+  if(lower.includes("box")||lower.includes("shelf")||lower.includes("archive")||lower.includes("tray"))return "▦";
+  if(lower.includes("pin")||lower.includes("location"))return "⌖";
+  if(lower.includes("house")||lower.includes("building")||lower.includes("room"))return "⌂";
+  if(kind.includes("garasje"))return "▣";
+  if(kind.includes("bod")||kind.includes("skap")||kind.includes("hylle")||kind.includes("oppbevaring"))return "▦";
+  if(kind.includes("rom"))return "⌂";
+  return "○";
 }
 function cloudLabel(state:string){return state==="synced"?"Synkronisert":state==="saving"?"Lagrer …":state==="loading"?"Henter …":state==="error"?"Synkfeil":"Lokalt"}
 function cardBadge(id:CardID,items:Item[],forSale:number,loaned:number){if(id==="items"&&items.length)return String(items.length);if(id==="sell"&&forSale)return String(forSale);if(id==="loans"&&loaned)return String(loaned);if(id==="photos"){const n=items.reduce((sum,i)=>sum+(i.images?.length||(i.image?1:0)),0);return n?String(n):undefined}}
@@ -410,7 +436,7 @@ function MoreView({place,items,totalValue,loanedCount,setView,exportData,importB
   return <div className="iosPage listPage morePage">
     <div className="accountHero glassCard" onClick={openAccount}><span className="accountHeroIcon">{account?"◉":"◎"}</span><div><b>{account?.user.displayName||account?.user.email||"Mine Ting-konto"}</b><p>{account?cloudLabel(cloudState):"Logg inn for synkronisering på iPhone, Android og PC."}</p></div><span className={account?.plan.plan==="pro"?"proChip":"freeChip"}>{account?.plan.plan==="pro"?"PRO":"GRATIS"}</span><span className="chevron">›</span></div>
     {account?.plan.plan!=="pro"&&<section className="planCard glassCard"><div><span className="blueSymbol">✦</span><h3>Mine Ting Pro</h3><p>Ubegrenset antall ting og steder, deling og utvidet AI-analyse.</p></div><button className="primaryButton" onClick={upgrade}>Oppgrader til Pro</button></section>}
-    <div className="groupLabel">{place.name.toUpperCase()}</div><div className="iosList menuList"><MenuRow symbol={place.icon||"⌂"} label="Sted" onClick={()=>setView("places")}/><MenuRow symbol="▣" label="Ting" value={String(items.length)} onClick={()=>setView("items")}/><MenuRow symbol="▧" label="Bilder" value={String(items.reduce((sum,i)=>sum+(i.images?.length||(i.image?1:0)),0))} onClick={()=>notify("Bildeoversikt kommer i neste web-utvidelse.")}/><MenuRow symbol="▤" label="Dokumenter" onClick={()=>notify("Dokumenter kommer i neste web-utvidelse.")}/><MenuRow symbol="⊕" label={`Del ${place.name}`} onClick={createInvite}/></div>
+    <div className="groupLabel">{place.name.toUpperCase()}</div><div className="iosList menuList"><MenuRow symbol={placeIconForWeb(place)} label="Sted" onClick={()=>setView("places")}/><MenuRow symbol="▣" label="Ting" value={String(items.length)} onClick={()=>setView("items")}/><MenuRow symbol="▧" label="Bilder" value={String(items.reduce((sum,i)=>sum+(i.images?.length||(i.image?1:0)),0))} onClick={()=>notify("Bildeoversikt kommer i neste web-utvidelse.")}/><MenuRow symbol="▤" label="Dokumenter" onClick={()=>notify("Dokumenter kommer i neste web-utvidelse.")}/><MenuRow symbol="⊕" label={`Del ${place.name}`} onClick={createInvite}/></div>
     <div className="groupLabel">MINE TING</div><div className="iosList menuList"><MenuRow symbol="☷" label="Administrer steder" onClick={()=>setView("places")}/><MenuRow symbol="♙" label="Utlånt" value={String(loanedCount)} onClick={()=>document.getElementById("loan-section")?.scrollIntoView({behavior:"smooth"})}/><MenuRow symbol="↗" label="Verdioversikt" value={money.format(totalValue)} onClick={()=>document.getElementById("value-section")?.scrollIntoView({behavior:"smooth"})}/><MenuRow symbol="⇩" label="Sikkerhetskopi" onClick={exportData}/><MenuRow symbol="⇧" label="Importer sikkerhetskopi" onClick={importBackup}/><MenuRow symbol="▱" label="Installer som app" onClick={()=>notify("På iPhone: Del → Legg til på Hjem-skjerm. På Android: velg Installer app i nettleseren.")}/><MenuRow symbol="⚙" label="Konto og innstillinger" onClick={openAccount}/></div>
     <section id="loan-section" className="overviewPanel glassCard"><span className="blueSymbol">♙</span><div><b>Utlånt</b><p>{loanedCount===0?"Ingen ting er registrert som utlånt.":`${loanedCount} ting er registrert som utlånt.`}</p></div></section>
     <section id="value-section" className="overviewPanel glassCard"><span className="blueSymbol">↗</span><div><b>Verdioversikt</b><p>Anslått verdi for {place.name}: <strong>{money.format(totalValue)}</strong></p></div></section>
@@ -419,7 +445,7 @@ function MoreView({place,items,totalValue,loanedCount,setView,exportData,importB
 function MenuRow({symbol,label,value,onClick}:{symbol:string;label:string;value?:string;onClick:()=>void}){return <button className="iosRow menuRow" onClick={onClick}><span className="menuSymbol">{symbol}</span><b>{label}</b><span className="menuValue">{value}</span><span className="chevron">›</span></button>}
 
 function PlacesView({locations,items,selectedPlaceID,setSelectedPlaceID,remove,openAdd}:{locations:Location[];items:Item[];selectedPlaceID:string;setSelectedPlaceID:(id:string)=>void;remove:(id:string)=>void;openAdd:()=>void}){
-  return <div className="iosPage listPage"><div className="sectionHeader"><p className="helperText">Hovedsteder fungerer som profiler i Mine Ting. Velg for eksempel Stue, Kjøkken, Bod eller Garasje.</p><button className="borderedSmall" onClick={openAdd}>＋ Nytt sted</button></div><div className="iosList placeList">{locations.map(place=>{const count=items.filter(i=>i.locationId===place.id).length,selected=place.id===selectedPlaceID;return <div className="iosRow" key={place.id}><div className="placeAvatar listAvatar">{place.image?<img src={place.image} alt=""/>:<span>{place.icon||"⌂"}</span>}</div><button className="placeMain" onClick={()=>setSelectedPlaceID(place.id)}><b>{place.name}</b><small>{place.kind||place.detail||"Sted"} · {count} ting</small></button>{selected&&<span className="blueSymbol">✓</span>}<button className="deleteButton" onClick={()=>remove(place.id)}>×</button></div>})}</div></div>
+  return <div className="iosPage listPage"><div className="sectionHeader"><p className="helperText">Hovedsteder fungerer som profiler i Mine Ting. Velg for eksempel Stue, Kjøkken, Bod eller Garasje.</p><button className="borderedSmall" onClick={openAdd}>＋ Nytt sted</button></div><div className="iosList placeList">{locations.map(place=>{const count=items.filter(i=>i.locationId===place.id).length,selected=place.id===selectedPlaceID;return <div className="iosRow" key={place.id}><div className="placeAvatar listAvatar">{place.image?<img src={place.image} alt=""/>:<span>{placeIconForWeb(place)}</span>}</div><button className="placeMain" onClick={()=>setSelectedPlaceID(place.id)}><b>{place.name}</b><small>{place.kind||place.detail||"Sted"} · {count} ting</small></button>{selected&&<span className="blueSymbol">✓</span>}<button className="deleteButton" onClick={()=>remove(place.id)}>×</button></div>})}</div></div>
 }
 
 function TabBar({view,setView,quick}:{view:View;setView:(v:View)=>void;quick:()=>void}){const tab=view==="places"?"more":view;return <nav className="tabBar"><Tab active={tab==="home"} symbol="⌂" label="Hjem" onClick={()=>setView("home")}/><Tab active={tab==="items"} symbol="▣" label="Ting" onClick={()=>setView("items")}/><button className="quickTab" onClick={quick}><span>＋</span><small>Legg til</small></button><Tab active={tab==="sell"} symbol="◇" label="Selg" onClick={()=>setView("sell")}/><Tab active={tab==="more"} symbol="•••" label="Mer" onClick={()=>setView("more")}/></nav>}
