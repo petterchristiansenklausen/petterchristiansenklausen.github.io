@@ -227,3 +227,37 @@ img{display:block;max-width:100%}
 .accountActions{margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:10px}.accountActions button{border:0;background:rgba(255,255,255,.62);border-radius:10px;padding:10px;color:var(--ios-blue)}.accountActions .dangerText{color:#FF3B30}
 .sheetHeader button:disabled,.primaryButton:disabled,.secondaryAction:disabled{opacity:.45;cursor:default}
 @media(max-width:560px){.homeTopActions{gap:7px}.homeTopActions>.plainLink{font-size:13px}.accountButton{padding:6px 8px}.planCard{align-items:flex-start;flex-direction:column}.planCard .primaryButton{width:100%}.accountHero{grid-template-columns:auto 1fr auto}.accountHero>.chevron{display:none}}
+
+.photoPickerBlock{display:flex;flex-direction:column;gap:10px}
+.multiPhotoGrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:9px}
+.multiPhoto{position:relative;aspect-ratio:1/1;border-radius:13px;overflow:hidden;background:rgba(118,137,152,.14);border:1px solid rgba(255,255,255,.76)}
+.multiPhoto img{width:100%;height:100%;object-fit:cover}
+.multiPhoto>button{position:absolute;top:5px;right:5px;width:27px;height:27px;border:0;border-radius:50%;background:rgba(22,27,31,.74);color:#fff;font-size:18px;display:grid;place-items:center}
+.multiPhoto>span{position:absolute;left:5px;bottom:5px;border-radius:999px;padding:4px 7px;background:rgba(22,27,31,.72);color:#fff;font-size:9px;font-weight:700}
+.addPhotoTile{aspect-ratio:1/1;border:1px dashed rgba(0,122,255,.35);border-radius:13px;background:rgba(255,255,255,.48);color:var(--ios-blue);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;font-size:28px}
+.addPhotoTile small{font-size:10px;font-weight:600}
+.analyzeButton{width:100%;border:0;border-radius:11px;background:rgba(0,122,255,.11);color:var(--ios-blue);font-weight:700;padding:11px 13px}
+.analyzeButton:disabled{opacity:.45}
+.bulkSheet{width:min(820px,100%)}
+.bulkIntro{display:flex;gap:13px;align-items:flex-start;padding:13px 2px 6px}
+.bulkIntro>span{font-size:30px;color:var(--ios-blue)}
+.bulkIntro b{display:block;font-size:17px}
+.bulkIntro p{font-size:12px;line-height:1.45;color:var(--ios-secondary);margin:5px 0 0}
+.bulkResultHeader{margin-top:19px}
+.bulkResults{display:flex;flex-direction:column;gap:9px}
+.bulkCandidate{display:grid;grid-template-columns:auto 1fr;gap:11px;align-items:flex-start;border-radius:14px;padding:11px;background:rgba(255,255,255,.58);border:1px solid rgba(255,255,255,.60);opacity:.62}
+.bulkCandidate.selected{opacity:1;background:rgba(255,255,255,.82)}
+.bulkCheck{position:relative;width:29px;height:29px}
+.bulkCheck input{position:absolute;opacity:0;pointer-events:none}
+.bulkCheck span{width:29px;height:29px;border-radius:50%;border:1.5px solid rgba(60,60,67,.24);display:grid;place-items:center;color:transparent;background:rgba(255,255,255,.55);font-size:13px;font-weight:800}
+.bulkCheck input:checked+span{background:var(--ios-blue);border-color:var(--ios-blue);color:#fff}
+.bulkCandidateBody{min-width:0}
+.bulkName{width:100%;border:0;outline:0;background:transparent;font-size:16px;font-weight:700;padding:0 0 6px}
+.bulkMeta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.bulkMeta select,.bulkMeta input{min-width:0;border:1px solid rgba(60,60,67,.12);border-radius:8px;background:rgba(255,255,255,.58);padding:7px 8px;font-size:11px}
+.bulkCandidateBody>small{display:block;margin-top:7px;color:var(--ios-secondary);font-size:10px;line-height:1.35}
+@media(max-width:560px){
+  .multiPhotoGrid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .bulkMeta{grid-template-columns:1fr}
+  .bulkCandidate{padding:10px}
+}
