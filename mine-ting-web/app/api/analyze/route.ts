@@ -13,12 +13,13 @@ function cleanJson(text: string) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const image = String(body.image || "");
     const token = String(body.token || "");
+    const rawImages = Array.isArray(body.images) ? body.images : [body.image];
+    const images = rawImages.map((value: unknown) => String(value || "")).filter((value: string) => value.startsWith("data:image/")).slice(0, 6);
 
     if (!token) return NextResponse.json({ ok: false, error: "Logg inn for å bruke AI-gjenkjenning." }, { status: 401 });
-    if (!image.startsWith("data:image/")) return NextResponse.json({ ok: false, error: "Bildet mangler eller har feil format." }, { status: 400 });
-    if (image.length > 7_500_000) return NextResponse.json({ ok: false, error: "Bildet er for stort. Prøv et mindre bilde." }, { status: 413 });
+    if (!images.length) return NextResponse.json({ ok: false, error: "Bildet mangler eller har feil format." }, { status: 400 });
+    if (images.reduce((sum: number, value: string) => sum + value.length, 0) > 15_000_000) return NextResponse.json({ ok: false, error: "Bildene er for store. Prøv færre eller mindre bilder." }, { status: 413 });
     if (!BACKEND_URL) return NextResponse.json({ ok: false, error: "Synkroniseringstjenesten er ikke konfigurert." }, { status: 503 });
 
     const statusResponse = await fetch(`${BACKEND_URL}/ai/status`, {
@@ -37,8 +38,9 @@ export async function POST(request: Request) {
     if (!gatewayToken) return NextResponse.json({ ok: false, error: "AI-tjenesten mangler autentisering." }, { status: 503 });
 
     const prompt = `
-Du analyserer et bilde for den norske appen Mine Ting.
-Finn hovedgjenstanden i bildet og returner BARE gyldig JSON, uten markdown.
+Du analyserer ett eller flere bilder av DEN SAMME gjenstanden for den norske appen Mine Ting.
+Bruk alle bildene samlet. Ett bilde kan vise hele gjenstanden, mens andre kan vise etikett, underside, serienummer, modellnummer eller skader.
+Finn hovedgjenstanden og returner BARE gyldig JSON, uten markdown.
 
 Regler:
 - Ikke gjett merke eller modell hvis det ikke kan leses eller kjennes igjen med rimelig sikkerhet.
@@ -79,7 +81,7 @@ JSON-format:
           role: "user",
           content: [
             { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: image, detail: "auto" } }
+            ...images.map((image: string) => ({ type: "image_url", image_url: { url: image, detail: "auto" } }))
           ]
         }],
         response_format: { type: "json_object" },
