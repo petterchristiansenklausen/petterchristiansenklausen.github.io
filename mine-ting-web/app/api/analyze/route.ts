@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getVercelOidcToken } from "@vercel/oidc";
 
 export const runtime = "nodejs";
 
@@ -32,7 +33,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: "Du har brukt de gratis AI-analysene denne måneden. Oppgrader til Pro for flere.", code: "AI_LIMIT_REACHED" }, { status: 402 });
     }
 
-    const gatewayToken = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN;
+    const gatewayToken = process.env.AI_GATEWAY_API_KEY || await getVercelOidcToken();
     if (!gatewayToken) return NextResponse.json({ ok: false, error: "AI-tjenesten mangler autentisering." }, { status: 503 });
 
     const prompt = `
