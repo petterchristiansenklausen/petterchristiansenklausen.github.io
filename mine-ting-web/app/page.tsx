@@ -11,6 +11,8 @@ type Item = {
   saleCategory?:string; salePrice?:number;
 };
 type Location = { id:string; name:string; detail:string; icon:string; kind?:string; note?:string; image?:string; parentId?:string; createdAt?:string; updatedAt?:string };
+type Deletion = { id:string; deletedAt:string };
+type SnapshotData = { items:Item[]; locations:Location[]; deletedItems:Deletion[]; deletedLocations:Deletion[] };
 type View = "home"|"items"|"sell"|"more"|"places";
 type AddMode = "camera"|"manual";
 type CardID = "items"|"search"|"camera"|"scanArea"|"addItem"|"sell"|"documents"|"loans"|"value"|"photos"|"sharing"|"backup";
@@ -94,6 +96,51 @@ function normalizeItems(value:unknown):Item[]{
   }));
 }
 
+function normalizeDeletions(value:unknown):Deletion[]{
+  if(!Array.isArray(value))return [];
+  return value.map((raw:any)=>({id:String(raw?.id||""),deletedAt:String(raw?.deletedAt||"")})).filter(v=>v.id&&v.deletedAt);
+}
+function stamp(value?:string){const t=Date.parse(value||"");return Number.isFinite(t)?t:0}
+function recordStamp(value:{updatedAt?:string;createdAt?:string}){return stamp(value.updatedAt)||stamp(value.createdAt)}
+function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
+  const remoteItems=normalizeItems(remote?.items||[]);
+  const remoteLocations=normalizeLocations(remote?.locations||[]);
+  const remoteDeletedItems=normalizeDeletions(remote?.deletedItems||[]);
+  const remoteDeletedLocations=normalizeDeletions(remote?.deletedLocations||[]);
+
+  function newestDeletes(a:Deletion[],b:Deletion[]){
+    const map=new Map<string,Deletion>();
+    for(const d of [...a,...b]){const old=map.get(d.id);if(!old||stamp(d.deletedAt)>stamp(old.deletedAt))map.set(d.id,d)}
+    return map;
+  }
+  const itemDeletes=newestDeletes(local.deletedItems,remoteDeletedItems);
+  const placeDeletes=newestDeletes(local.deletedLocations,remoteDeletedLocations);
+
+  const mergeRecords=<T extends {id:string;updatedAt?:string;createdAt?:string}>(a:T[],b:T[],deletes:Map<string,Deletion>)=>{
+    const left=new Map(a.map(v=>[v.id,v])),right=new Map(b.map(v=>[v.id,v]));
+    const ids=new Set([...left.keys(),...right.keys(),...deletes.keys()]);
+    const out:T[]=[];
+    for(const id of ids){
+      const l=left.get(id),r=right.get(id);
+      let chosen:T|undefined;
+      if(l&&r)chosen=recordStamp(l)>=recordStamp(r)?l:r;
+      else chosen=l||r;
+      const del=deletes.get(id);
+      if(del&&stamp(del.deletedAt)>=recordStamp(chosen||{id,updatedAt:"",createdAt:""}))continue;
+      if(chosen)out.push(chosen);
+    }
+    return out;
+  };
+  const items=mergeRecords(local.items,remoteItems,itemDeletes);
+  const locations=mergeRecords(local.locations,remoteLocations,placeDeletes);
+  const liveItemIDs=new Set(items.map(v=>v.id)),livePlaceIDs=new Set(locations.map(v=>v.id));
+  return{
+    items,locations,
+    deletedItems:[...itemDeletes.values()].filter(d=>!liveItemIDs.has(d.id)),
+    deletedLocations:[...placeDeletes.values()].filter(d=>!livePlaceIDs.has(d.id))
+  };
+}
+
 async function jsonFetch(url:string, init?:RequestInit){
   const response=await fetch(url,init);
   const data=await response.json().catch(()=>({}));
@@ -129,6 +176,10 @@ export default function Page(){
   const [householdId,setHouseholdId]=useState("");
   const [cloudState,setCloudState]=useState<"local"|"loading"|"synced"|"saving"|"error">("local");
   const [cloudReady,setCloudReady]=useState(false);
+  const [deletedItems,setDeletedItems]=useState<Deletion[]>([]);
+  const [deletedLocations,setDeletedLocations]=useState<Deletion[]>([]);
+  const [snapshotVersion,setSnapshotVersion]=useState(1);
+  const [lastCloudSync,setLastCloudSync]=useState("");
   const importRef=useRef<HTMLInputElement>(null);
   const syncTimer=useRef<number|undefined>(undefined);
   const hydrating=useRef(false);
@@ -150,23 +201,36 @@ export default function Page(){
 
       if(chosen){
         const snapshot=await jsonFetch(`${API_URL}/snapshot?householdId=${encodeURIComponent(chosen)}`,{headers:{Authorization:`Bearer ${sessionToken}`},cache:"no-store"});
-        const cloudItems=normalizeItems(snapshot.data?.items||[]);
-        const cloudLocations=normalizeLocations(snapshot.data?.locations||[]);
-        const localItems=normalizeItems(JSON.parse(localStorage.getItem("mine-ting-items-v1")||"[]"));
-        const localLocations=normalizeLocations(JSON.parse(localStorage.getItem("mine-ting-locations-v1")||"null"));
-
-        const cloudIsEmpty=cloudItems.length===0 && (!snapshot.data?.locations || snapshot.data.locations.length===0);
-        const hasLocal=localItems.length>0 || localLocations.length>0;
-        if(cloudIsEmpty&&hasLocal){
-          await jsonFetch(`${API_URL}/snapshot`,{
-            method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${sessionToken}`},
-            body:JSON.stringify({householdId:chosen,data:{items:localItems,locations:localLocations}})
-          });
-          setItems(localItems); setLocations(localLocations);
-        }else{
-          setItems(cloudItems);
-          setLocations(cloudLocations.length?cloudLocations:defaultLocations);
+        const localData:SnapshotData={
+          items:normalizeItems(JSON.parse(localStorage.getItem("mine-ting-items-v1")||"[]")),
+          locations:normalizeLocations(JSON.parse(localStorage.getItem("mine-ting-locations-v1")||"null")),
+          deletedItems:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-items-v2")||"[]")),
+          deletedLocations:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-locations-v2")||"[]"))
+        };
+        const cloudData:SnapshotData={
+          items:normalizeItems(snapshot.data?.items||[]),
+          locations:normalizeLocations(snapshot.data?.locations||[]),
+          deletedItems:normalizeDeletions(snapshot.data?.deletedItems||[]),
+          deletedLocations:normalizeDeletions(snapshot.data?.deletedLocations||[])
+        };
+        const cloudIsEmpty=cloudData.items.length===0&&cloudData.locations.length===0&&cloudData.deletedItems.length===0&&cloudData.deletedLocations.length===0;
+        const hasLocal=localData.items.length>0||localData.locations.length>0||localData.deletedItems.length>0||localData.deletedLocations.length>0;
+        const merged=cloudIsEmpty&&hasLocal?localData:mergeSnapshotData(localData,cloudData);
+        let version=Number(snapshot.version||1);
+        if(JSON.stringify(merged)!==JSON.stringify(cloudData)){
+          try{
+            const saved=await jsonFetch(`${API_URL}/snapshot`,{
+              method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${sessionToken}`},
+              body:JSON.stringify({householdId:chosen,data:merged,baseVersion:version})
+            });
+            version=Number(saved.version||version+1);
+          }catch(error:any){
+            if(error.code!=="SYNC_CONFLICT")throw error;
+          }
         }
+        setItems(merged.items);setLocations(merged.locations.length?merged.locations:defaultLocations);
+        setDeletedItems(merged.deletedItems);setDeletedLocations(merged.deletedLocations);
+        setSnapshotVersion(version);setLastCloudSync(new Date().toISOString());
       }
       setCloudState("synced"); setCloudReady(true);
     }catch(error:any){
@@ -186,6 +250,8 @@ export default function Page(){
       const savedPlace=localStorage.getItem("mine-ting-selected-place-v2");
       const savedOrder=localStorage.getItem("mine-ting-card-order-v1");
       const savedHidden=localStorage.getItem("mine-ting-card-hidden-v1");
+      const savedDeletedItems=localStorage.getItem("mine-ting-deleted-items-v2");
+      const savedDeletedLocations=localStorage.getItem("mine-ting-deleted-locations-v2");
       if(savedItems){localItems=normalizeItems(JSON.parse(savedItems));setItems(localItems)}
       if(savedLocations){localLocations=normalizeLocations(JSON.parse(savedLocations));setLocations(localLocations)}
       if(savedPlace)setSelectedPlaceID(savedPlace);
@@ -196,6 +262,8 @@ export default function Page(){
         setCardOrder([...valid,...missing]);
       }
       if(savedHidden)setHiddenCards(new Set(JSON.parse(savedHidden) as CardID[]));
+      if(savedDeletedItems)setDeletedItems(normalizeDeletions(JSON.parse(savedDeletedItems)));
+      if(savedDeletedLocations)setDeletedLocations(normalizeDeletions(JSON.parse(savedDeletedLocations)));
     }catch{}
     setReady(true);
     const savedToken=localStorage.getItem(TOKEN_KEY)||"";
@@ -220,27 +288,55 @@ export default function Page(){
     localStorage.setItem("mine-ting-selected-place-v2",selectedPlaceID);
     localStorage.setItem("mine-ting-card-order-v1",JSON.stringify(cardOrder));
     localStorage.setItem("mine-ting-card-hidden-v1",JSON.stringify([...hiddenCards]));
+    localStorage.setItem("mine-ting-deleted-items-v2",JSON.stringify(deletedItems));
+    localStorage.setItem("mine-ting-deleted-locations-v2",JSON.stringify(deletedLocations));
 
     if(!token||!householdId||!cloudReady||hydrating.current)return;
     if(syncTimer.current)window.clearTimeout(syncTimer.current);
     setCloudState("saving");
     syncTimer.current=window.setTimeout(async()=>{
+      const localData:SnapshotData={items,locations,deletedItems,deletedLocations};
       try{
-        await jsonFetch(`${API_URL}/snapshot`,{
+        const saved=await jsonFetch(`${API_URL}/snapshot`,{
           method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
-          body:JSON.stringify({householdId,data:{items,locations}})
+          body:JSON.stringify({householdId,data:localData,baseVersion:snapshotVersion})
         });
+        setSnapshotVersion(Number(saved.version||snapshotVersion+1));
+        setLastCloudSync(new Date().toISOString());
         setCloudState("synced");
       }catch(error:any){
+        if(error.code==="SYNC_CONFLICT"){
+          try{
+            const latest=await jsonFetch(`${API_URL}/snapshot?householdId=${encodeURIComponent(householdId)}`,{headers:{Authorization:`Bearer ${token}`},cache:"no-store"});
+            const merged=mergeSnapshotData(localData,latest.data||{});
+            const saved=await jsonFetch(`${API_URL}/snapshot`,{
+              method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
+              body:JSON.stringify({householdId,data:merged,baseVersion:Number(latest.version||1)})
+            });
+            hydrating.current=true;
+            setItems(merged.items);setLocations(merged.locations.length?merged.locations:defaultLocations);
+            setDeletedItems(merged.deletedItems);setDeletedLocations(merged.deletedLocations);
+            setSnapshotVersion(Number(saved.version||Number(latest.version||1)+1));
+            setLastCloudSync(new Date().toISOString());setCloudState("synced");
+            window.setTimeout(()=>{hydrating.current=false},100);
+            return;
+          }catch{}
+        }
         setCloudState("error");
         if(error.code==="PRO_REQUIRED")notify(error.message);
       }
     },850);
-  },[items,locations,selectedPlaceID,cardOrder,hiddenCards,ready,token,householdId,cloudReady]);
+  },[items,locations,deletedItems,deletedLocations,selectedPlaceID,cardOrder,hiddenCards,ready,token,householdId,cloudReady]);
 
   useEffect(()=>{
     if(!locations.some(place=>place.id===selectedPlaceID)&&locations[0])setSelectedPlaceID(locations[0].id);
   },[locations,selectedPlaceID]);
+
+  useEffect(()=>{
+    if(!token||!householdId)return;
+    const timer=window.setInterval(()=>{if(document.visibilityState==="visible"&&!hydrating.current)bootstrapCloud(token,householdId)},60000);
+    return()=>window.clearInterval(timer);
+  },[token,householdId]);
 
   const selectedPlace=locations.find(place=>place.id===selectedPlaceID)||locations[0];
   const placeItems=useMemo(()=>items.filter(item=>!selectedPlace||item.locationId===selectedPlace.id),[items,selectedPlace]);
@@ -266,13 +362,13 @@ export default function Page(){
     setPlaceOpen(true);
   }
   function exportData(){
-    const blob=new Blob([JSON.stringify({version:3,items,locations},null,2)],{type:"application/json"});
+    const blob=new Blob([JSON.stringify({version:4,items,locations,deletedItems,deletedLocations},null,2)],{type:"application/json"});
     const url=URL.createObjectURL(blob),anchor=document.createElement("a");
     anchor.href=url;anchor.download=`mine-ting-backup-${new Date().toISOString().slice(0,10)}.json`;anchor.click();URL.revokeObjectURL(url);notify("Sikkerhetskopi eksportert");
   }
   async function importData(event:ChangeEvent<HTMLInputElement>){
     const file=event.target.files?.[0];if(!file)return;
-    try{const data=JSON.parse(await file.text());if(Array.isArray(data.items))setItems(normalizeItems(data.items));if(Array.isArray(data.locations))setLocations(normalizeLocations(data.locations));notify("Sikkerhetskopi importert")}catch{notify("Kunne ikke lese sikkerhetskopien")}
+    try{const data=JSON.parse(await file.text());if(Array.isArray(data.items))setItems(normalizeItems(data.items));if(Array.isArray(data.locations))setLocations(normalizeLocations(data.locations));if(Array.isArray(data.deletedItems))setDeletedItems(normalizeDeletions(data.deletedItems));if(Array.isArray(data.deletedLocations))setDeletedLocations(normalizeDeletions(data.deletedLocations));notify("Sikkerhetskopi importert")}catch{notify("Kunne ikke lese sikkerhetskopien")}
     event.target.value="";
   }
   async function logout(){
@@ -305,6 +401,17 @@ export default function Page(){
     notify("Invitasjonen er godtatt.");
   }
 
+  function markItemDeleted(id:string){
+    const now=new Date().toISOString();
+    setItems(current=>current.filter(item=>item.id!==id));
+    setDeletedItems(current=>[...current.filter(d=>d.id!==id),{id,deletedAt:now}]);
+  }
+  function markPlaceDeleted(id:string){
+    const now=new Date().toISOString();
+    setLocations(current=>current.filter(place=>place.id!==id));
+    setDeletedLocations(current=>[...current.filter(d=>d.id!==id),{id,deletedAt:now}]);
+  }
+
   function activateCard(id:CardID){
     switch(id){
       case"items":setView("items");break;
@@ -334,10 +441,10 @@ export default function Page(){
       {view!=="home"&&<header className="navBar"><div className="navBarSide">{view==="places"?<button className="iconButton textButton" onClick={()=>setView("more")}>‹ Mer</button>:null}</div><h1>{topTitle}</h1><div className="navBarSide right">{view==="items"&&<button className="iconButton" onClick={()=>openAdd("manual")}>＋</button>}</div></header>}
       <section className="screen">
         {view==="home"&&selectedPlace&&<HomeView locations={locations} selectedPlace={selectedPlace} setSelectedPlaceID={setSelectedPlaceID} placeItems={placeItems} totalValue={totalValue} forSaleCount={forSaleCount} loanedCount={loanedCount} cardOrder={cardOrder} hiddenCards={hiddenCards} isCustomizing={isCustomizing} setIsCustomizing={setIsCustomizing} draggedCard={draggedCard} setDraggedCard={setDraggedCard} moveDragged={moveDragged} toggleCard={id=>setHiddenCards(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next})} activateCard={activateCard} setView={setView} openPlace={openPlace} recent={placeItems.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,5)} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)}/>}
-        {view==="items"&&<ItemsView items={filteredItems} place={selectedPlace} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openAdd={()=>openAdd("manual")} edit={id=>setEditItemID(id)} remove={id=>{if(confirm("Slette denne gjenstanden?"))setItems(current=>current.filter(item=>item.id!==id))}} sell={id=>{setSaleItemID(id);setView("sell")}}/>}
+        {view==="items"&&<ItemsView items={filteredItems} place={selectedPlace} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openAdd={()=>openAdd("manual")} edit={id=>setEditItemID(id)} remove={id=>{if(confirm("Slette denne gjenstanden?"))markItemDeleted(id)}} sell={id=>{setSaleItemID(id);setView("sell")}}/>}
         {view==="sell"&&<SellView items={placeItems} selectedID={saleItemID} setSelectedID={setSaleItemID} updateItem={updated=>setItems(current=>current.map(item=>item.id===updated.id?updated:item))} notify={notify} openAdd={()=>openAdd("manual")}/>}
         {view==="more"&&selectedPlace&&<MoreView place={selectedPlace} items={placeItems} totalValue={totalValue} loanedCount={loanedCount} setView={setView} exportData={exportData} importBackup={()=>importRef.current?.click()} notify={notify} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)} createInvite={createInvite} upgrade={upgrade}/>}
-        {view==="places"&&<PlacesView locations={locations} items={items} selectedPlaceID={selectedPlaceID} setSelectedPlaceID={setSelectedPlaceID} remove={id=>{if(items.some(item=>item.locationId===id))return alert("Flytt eller slett ting som er registrert på dette stedet først.");if(confirm("Slette stedet?"))setLocations(current=>current.filter(place=>place.id!==id))}} openAdd={openPlace}/>}
+        {view==="places"&&<PlacesView locations={locations} items={items} selectedPlaceID={selectedPlaceID} setSelectedPlaceID={setSelectedPlaceID} remove={id=>{if(items.some(item=>item.locationId===id))return alert("Flytt eller slett ting som er registrert på dette stedet først.");if(confirm("Slette stedet?"))markPlaceDeleted(id)}} openAdd={openPlace}/>}
       </section>
       <TabBar view={view} setView={setView} quick={()=>openAdd("manual")}/>
     </div>
@@ -476,7 +583,7 @@ function SaleEditor({item,back,save,notify}:{item:Item;back:()=>void;save:(i:Ite
   const generatedDescription=item.saleDescription||`${item.name} selges. Tilstand: ${item.condition.toLowerCase()}.${item.brand?` Merke: ${item.brand}.`:""}${item.model?` Modell: ${item.model}.`:""}${item.notes?` ${item.notes.trim()}`:""}\n\nKan hentes etter avtale. Se bilder for tilstand.`;
   const [title,setTitle]=useState(generatedTitle),[category,setCategory]=useState(item.saleCategory||item.category),[price,setPrice]=useState(generatedPrice?String(generatedPrice):""),[description,setDescription]=useState(generatedDescription);
   const full=[title,category?`Kategori: ${category}`:"",price?`Pris: ${price} kr`:"",description].filter(Boolean).join("\n\n");
-  function persist(){save({...item,saleTitle:title.trim(),saleCategory:category.trim(),salePrice:Number(price)||0,saleDescription:description.trim(),status:"Til salgs"});notify("Annonseutkast lagret")}
+  function persist(){save({...item,saleTitle:title.trim(),saleCategory:category.trim(),salePrice:Number(price)||0,saleDescription:description.trim(),status:"Til salgs",updatedAt:new Date().toISOString()});notify("Annonseutkast lagret")}
   async function copy(){await navigator.clipboard.writeText(full);notify("Annonsen er kopiert")}
   return <div className="iosPage formPage"><div className="inlineNav"><button className="plainLink" onClick={back}>‹ Selg</button><b>Lag annonse</b><button className="plainLink" onClick={persist}>Lagre</button></div><div className="formGroup"><div className="summaryRow"><Thumbnail item={item} size={64}/><div><b>{item.name}</b><small>Se gjennom og rediger før du bruker annonsen.</small></div></div></div><div className="groupLabel">ANNONSE</div><div className="formGroup compactFields"><Field label="Tittel"><textarea value={title} onChange={e=>setTitle(e.target.value)} rows={2}/></Field><Field label="Kategoriforslag"><input value={category} onChange={e=>setCategory(e.target.value)}/></Field><Field label="Pris"><input inputMode="numeric" value={price} onChange={e=>setPrice(e.target.value.replace(/\D/g,""))}/></Field><Field label="Beskrivelse"><textarea value={description} onChange={e=>setDescription(e.target.value)} rows={9}/></Field></div><div className="groupLabel">HANDLINGER</div><div className="formGroup actionGroup"><button onClick={copy}>▤ <span>Kopier annonsetekst</span><b>›</b></button><button onClick={()=>{persist();window.open("https://www.finn.no","_blank","noopener,noreferrer")}}>⌁ <span>Åpne FINN</span><b>›</b></button></div><p className="formFootnote">Mine Ting lager et utkast. Du går gjennom opplysningene og fullfører publiseringen hos FINN.</p></div>
 }
@@ -559,7 +666,7 @@ function AddItemSheet({mode,locations,preferredPlaceID,token,close,save,notify}:
     if(!form.name.trim())return alert("Skriv inn hva gjenstanden er.");
     setBusy(true);
     const storedImages=await uploadAll();
-    save({id:uid(),name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,value:Number(form.value)||0,paid:Number(form.paid)||0,serial:form.serial.trim(),notes:form.notes.trim(),image:storedImages[0],images:storedImages,quantity:1,createdAt:new Date().toISOString(),status:form.status,loanedTo:form.loanedTo.trim(),saleTitle,saleDescription,saleCategory:form.category});
+    {const now=new Date().toISOString();save({id:uid(),name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,value:Number(form.value)||0,paid:Number(form.paid)||0,serial:form.serial.trim(),notes:form.notes.trim(),image:storedImages[0],images:storedImages,quantity:1,createdAt:now,updatedAt:now,status:form.status,loanedTo:form.loanedTo.trim(),saleTitle,saleDescription,saleCategory:form.category});}
   }
 
   return <div className="sheetBackdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><div className="sheet">
@@ -631,7 +738,7 @@ function BulkScanSheet({locations,preferredPlaceID,token,close,saveMany,notify}:
     const created=selected.map(item=>({
       id:uid(),name:item.name.trim(),category:item.category,brand:item.brand.trim(),model:item.model.trim(),locationId,
       detail:[detail.trim(),item.locationHint.trim()].filter(Boolean).join(" · "),condition:"Brukt",value:0,paid:0,serial:"",
-      notes:item.notes.trim(),image:storedImages[0],images:storedImages,quantity:item.quantity,createdAt:now,status:"Lagret" as ItemStatus,loanedTo:""
+      notes:item.notes.trim(),image:storedImages[0],images:storedImages,quantity:item.quantity,createdAt:now,updatedAt:now,status:"Lagret" as ItemStatus,loanedTo:""
     }));
     saveMany(created);
   }
@@ -655,7 +762,7 @@ function AddPlaceSheet({token,close,save}:{token:string;close:()=>void;save:(l:L
   const [busy,setBusy]=useState(false);const fileRef=useRef<HTMLInputElement>(null);
   const symbols:Record<string,string>={Rom:"⌂",Bod:"▦",Garasje:"▣",Skap:"▤",Annet:"○"};
   async function choose(e:ChangeEvent<HTMLInputElement>){const file=e.target.files?.[0];if(file)setImage(await compressImage(file))}
-  async function done(){if(!name.trim())return alert("Skriv inn et navn på stedet.");setBusy(true);let stored=image||undefined;if(token&&image.startsWith("data:image/")){try{const up=await jsonFetch("/api/upload-image",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,token})});if(up.url)stored=up.url}catch{}}save({id:uid(),name:name.trim(),detail:kind,kind,icon:symbols[kind]||"○",note:note.trim(),image:stored})}
+  async function done(){if(!name.trim())return alert("Skriv inn et navn på stedet.");setBusy(true);let stored=image||undefined;if(token&&image.startsWith("data:image/")){try{const up=await jsonFetch("/api/upload-image",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,token})});if(up.url)stored=up.url}catch{}}{const now=new Date().toISOString();save({id:uid(),name:name.trim(),detail:kind,kind,icon:symbols[kind]||"○",note:note.trim(),image:stored,createdAt:now,updatedAt:now})}}
   return <div className="sheetBackdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><div className="sheet smallSheet"><header className="sheetHeader"><button className="plainLink" onClick={close}>Avbryt</button><b>Legg til sted</b><button className="plainLink" disabled={busy} onClick={done}>{busy?"Vent …":"Lagre"}</button></header><button className="avatarPicker" onClick={()=>fileRef.current?.click()}>{image?<img src={image} alt=""/>:<span>{symbols[kind]}</span>}<small>Velg bilde</small></button><input ref={fileRef} hidden type="file" accept="image/*" onChange={choose}/><div className="groupLabel">STED</div><div className="formGroup compactFields"><Field label="Navn"><input value={name} onChange={e=>setName(e.target.value)} placeholder="F.eks. Stue"/></Field><Field label="Type"><select value={kind} onChange={e=>setKind(e.target.value)}>{Object.keys(symbols).map(v=><option key={v}>{v}</option>)}</select></Field><Field label="Notat"><textarea rows={4} value={note} onChange={e=>setNote(e.target.value)}/></Field></div></div></div>
 }
 
