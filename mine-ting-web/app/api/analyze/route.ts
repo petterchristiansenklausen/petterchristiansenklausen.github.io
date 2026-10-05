@@ -16,6 +16,21 @@ function paymentRequired(data: any) {
   return data?.error?.type === "customer_verification_required";
 }
 
+function freeTierRestricted(data: any) {
+  const type = String(data?.error?.type || "");
+  const message = String(data?.error?.message || "").toLowerCase();
+  return type === "no_providers_available" &&
+    (message.includes("free tier") || message.includes("paid credits"));
+}
+
+function freeTierResponse() {
+  return NextResponse.json({
+    ok: false,
+    error: "AI Gateway er koblet riktig, men Vercel begrenser modellene på gratis AI-kreditt. Betalt AI-kreditt må aktiveres før bildeanalysen kan brukes.",
+    code: "AI_GATEWAY_PAID_CREDITS_REQUIRED"
+  }, { status: 503 });
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -138,6 +153,7 @@ JSON-format:
           code: "AI_GATEWAY_PAYMENT_REQUIRED"
         }, { status: 503 });
       }
+      if (freeTierRestricted(aiData)) return freeTierResponse();
 
       ({ response: aiResponse, data: aiData } = await callModel(FALLBACK_MODEL));
       modelUsed = FALLBACK_MODEL;
@@ -153,6 +169,7 @@ JSON-format:
           code: "AI_GATEWAY_PAYMENT_REQUIRED"
         }, { status: 503 });
       }
+      if (freeTierRestricted(aiData)) return freeTierResponse();
       return NextResponse.json({ ok: false, error: "Kunne ikke analysere bildet akkurat nå. Prøv igjen." }, { status: 502 });
     }
 
