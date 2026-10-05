@@ -126,7 +126,8 @@ function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
       if(l&&r)chosen=recordStamp(l)>=recordStamp(r)?l:r;
       else chosen=l||r;
       const del=deletes.get(id);
-      if(del&&stamp(del.deletedAt)>=recordStamp(chosen||{id,updatedAt:"",createdAt:""}))continue;
+      const chosenStamp=chosen?recordStamp(chosen):0;
+      if(del&&stamp(del.deletedAt)>=chosenStamp)continue;
       if(chosen)out.push(chosen);
     }
     return out;
