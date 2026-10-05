@@ -6,11 +6,11 @@ type ItemStatus = "I bruk" | "Lagret" | "Til salgs" | "Utlånt";
 type Item = {
   id:string; name:string; category:string; brand:string; model:string;
   locationId:string; detail:string; condition:string; value:number; paid:number;
-  serial:string; notes:string; image?:string; images?:string[]; quantity?:number; createdAt:string;
+  serial:string; notes:string; image?:string; images?:string[]; quantity?:number; createdAt:string; updatedAt?:string;
   status?:ItemStatus; loanedTo?:string; saleTitle?:string; saleDescription?:string;
   saleCategory?:string; salePrice?:number;
 };
-type Location = { id:string; name:string; detail:string; icon:string; kind?:string; note?:string; image?:string };
+type Location = { id:string; name:string; detail:string; icon:string; kind?:string; note?:string; image?:string; parentId?:string; createdAt?:string; updatedAt?:string };
 type View = "home"|"items"|"sell"|"more"|"places";
 type AddMode = "camera"|"manual";
 type CardID = "items"|"search"|"camera"|"scanArea"|"addItem"|"sell"|"documents"|"loans"|"value"|"photos"|"sharing"|"backup";
@@ -74,7 +74,10 @@ function normalizeLocations(value:unknown):Location[]{
   return value.map((raw:any)=>({
     id:String(raw.id||uid()),name:String(raw.name||"Sted"),detail:String(raw.detail||raw.kind||"Sted"),
     icon:String(raw.icon||"⌂"),kind:String(raw.kind||raw.detail||"Sted"),note:String(raw.note||""),
-    image:typeof raw.image==="string"?raw.image:undefined
+    image:typeof raw.image==="string"?raw.image:undefined,
+    parentId:typeof raw.parentId==="string"&&raw.parentId?raw.parentId:undefined,
+    createdAt:typeof raw.createdAt==="string"?raw.createdAt:undefined,
+    updatedAt:typeof raw.updatedAt==="string"?raw.updatedAt:undefined
   }));
 }
 function normalizeItems(value:unknown):Item[]{
@@ -85,7 +88,7 @@ function normalizeItems(value:unknown):Item[]{
     detail:String(raw.detail||""),condition:String(raw.condition||"Brukt"),value:Number(raw.value||0),paid:Number(raw.paid||0),
     serial:String(raw.serial||""),notes:String(raw.notes||""),image:typeof raw.image==="string"?raw.image:(Array.isArray(raw.images)&&typeof raw.images[0]==="string"?raw.images[0]:undefined),
     images:Array.isArray(raw.images)?raw.images.filter((value:any)=>typeof value==="string"):(typeof raw.image==="string"?[raw.image]:[]),quantity:Math.max(1,Number(raw.quantity||1)),
-    createdAt:String(raw.createdAt||new Date().toISOString()),status:(raw.status||"I bruk") as ItemStatus,
+    createdAt:String(raw.createdAt||new Date().toISOString()),updatedAt:typeof raw.updatedAt==="string"?raw.updatedAt:undefined,status:(raw.status||"I bruk") as ItemStatus,
     loanedTo:String(raw.loanedTo||""),saleTitle:String(raw.saleTitle||""),saleDescription:String(raw.saleDescription||""),
     saleCategory:String(raw.saleCategory||""),salePrice:Number(raw.salePrice||0)
   }));
