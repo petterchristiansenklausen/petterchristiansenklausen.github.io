@@ -2,209 +2,847 @@
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
+type ItemStatus = "I bruk" | "Lagret" | "Til salgs" | "Utlånt";
 type Item = {
-  id:string; name:string; category:string; brand:string; model:string;
-  locationId:string; detail:string; condition:string; value:number; paid:number;
-  serial:string; notes:string; image?:string; createdAt:string;
+  id: string;
+  name: string;
+  category: string;
+  brand: string;
+  model: string;
+  locationId: string;
+  detail: string;
+  condition: string;
+  value: number;
+  paid: number;
+  serial: string;
+  notes: string;
+  image?: string;
+  createdAt: string;
+  status?: ItemStatus;
+  loanedTo?: string;
+  saleTitle?: string;
+  saleDescription?: string;
+  saleCategory?: string;
+  salePrice?: number;
 };
-type Location = { id:string; name:string; detail:string; icon:string };
-type View = "home"|"items"|"locations"|"sell";
 
-const defaultLocations:Location[] = [
-  {id:"stue",name:"Stue",detail:"Skuffer, skap og hyller",icon:"🛋️"},
-  {id:"kjokken",name:"Kjøkken",detail:"Skap og skuffer",icon:"🍽️"},
-  {id:"bod",name:"Bod",detail:"Kasser og hyller",icon:"📦"},
-  {id:"garasje",name:"Garasje",detail:"Hyller og verktøy",icon:"🔧"}
+type Location = {
+  id: string;
+  name: string;
+  detail: string;
+  icon: string;
+  kind?: string;
+  note?: string;
+  image?: string;
+};
+
+type View = "home" | "items" | "sell" | "more" | "places";
+type AddMode = "camera" | "manual";
+type CardID = "items" | "search" | "camera" | "addItem" | "sell" | "documents" | "loans" | "value" | "photos" | "sharing" | "backup";
+
+const defaultLocations: Location[] = [
+  { id: "stue", name: "Stue", detail: "Rom", icon: "⌂", kind: "Rom" },
+  { id: "kjokken", name: "Kjøkken", detail: "Rom", icon: "⌂", kind: "Rom" },
+  { id: "bod", name: "Bod", detail: "Oppbevaring", icon: "▦", kind: "Bod" },
+  { id: "garasje", name: "Garasje", detail: "Garasje", icon: "▣", kind: "Garasje" }
 ];
-const categories=["Elektronikk","Verktøy","Møbler","Kjøkken","Samling","Klær","Sport","Hobby","Annet"];
-const money=new Intl.NumberFormat("nb-NO",{style:"currency",currency:"NOK",maximumFractionDigits:0});
-const uid=()=>typeof crypto!=="undefined"&&"randomUUID" in crypto?crypto.randomUUID():`${Date.now()}-${Math.random()}`;
 
-async function compressImage(file:File):Promise<string>{
-  return new Promise((resolve,reject)=>{
-    const r=new FileReader();
-    r.onerror=()=>reject(r.error);
-    r.onload=()=>{
-      const img=new Image();
-      img.onload=()=>{
-        const max=1200, scale=Math.min(1,max/Math.max(img.width,img.height));
-        const c=document.createElement("canvas");
-        c.width=Math.round(img.width*scale); c.height=Math.round(img.height*scale);
-        const ctx=c.getContext("2d");
-        if(!ctx) return reject(new Error("Ingen bildebehandling"));
-        ctx.drawImage(img,0,0,c.width,c.height);
-        resolve(c.toDataURL("image/jpeg",.76));
+const categories = ["Elektronikk", "Verktøy", "Møbler", "Kjøkken", "Samling", "Klær", "Sport", "Hobby", "Annet"];
+const money = new Intl.NumberFormat("nb-NO", { style: "currency", currency: "NOK", maximumFractionDigits: 0 });
+const uid = () => typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+
+const homeCards: { id: CardID; title: string; subtitle: string; symbol: string }[] = [
+  { id: "items", title: "Ting", subtitle: "Se alle ting som er registrert på dette stedet.", symbol: "▣" },
+  { id: "search", title: "Finn en ting", subtitle: "Søk etter navn, merke, modell, serienummer eller plassering.", symbol: "⌕" },
+  { id: "camera", title: "Registrer med kamera", subtitle: "Ta bilde og registrer gjenstanden med én gang.", symbol: "◎" },
+  { id: "addItem", title: "Legg til ting", subtitle: "Registrer manuelt med plassering, verdi og kjøpsopplysninger.", symbol: "+" },
+  { id: "sell", title: "Selg", subtitle: "Lag et ferdig annonseutkast med bilder og opplysninger.", symbol: "◇" },
+  { id: "documents", title: "Dokumenter", subtitle: "Kvitteringer, garantier, manualer og annen dokumentasjon.", symbol: "▤" },
+  { id: "loans", title: "Utlånt", subtitle: "Hold oversikt over hvem som har lånt ting.", symbol: "♙" },
+  { id: "value", title: "Verdi", subtitle: "Se kjøpspris og anslått verdi for tingene dine.", symbol: "↗" },
+  { id: "photos", title: "Bilder", subtitle: "Bildeoversikt for tingene på dette stedet.", symbol: "▧" },
+  { id: "sharing", title: "Del sted", subtitle: "Del oversikten over dette stedet med andre i husstanden.", symbol: "⊕" },
+  { id: "backup", title: "Sikkerhetskopi", subtitle: "Eksporter eller importer en kopi av steder og ting.", symbol: "⇩" }
+];
+
+async function compressImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const max = 1200;
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return reject(new Error("Kunne ikke behandle bildet"));
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.76));
       };
-      img.onerror=reject; img.src=String(r.result);
+      img.onerror = reject;
+      img.src = String(reader.result);
     };
-    r.readAsDataURL(file);
+    reader.readAsDataURL(file);
   });
 }
 
-export default function Page(){
-  const [view,setView]=useState<View>("home");
-  const [items,setItems]=useState<Item[]>([]);
-  const [locations,setLocations]=useState<Location[]>(defaultLocations);
-  const [ready,setReady]=useState(false);
-  const [query,setQuery]=useState("");
-  const [category,setCategory]=useState("Alle");
-  const [addOpen,setAddOpen]=useState(false);
-  const [locOpen,setLocOpen]=useState(false);
-  const [sellId,setSellId]=useState("");
-  const [toast,setToast]=useState("");
-  const importRef=useRef<HTMLInputElement>(null);
+function normalizeLocations(value: unknown): Location[] {
+  if (!Array.isArray(value)) return defaultLocations;
+  return value.map((raw: any) => ({
+    id: String(raw.id || uid()),
+    name: String(raw.name || "Sted"),
+    detail: String(raw.detail || raw.kind || "Sted"),
+    icon: String(raw.icon || "⌂"),
+    kind: String(raw.kind || raw.detail || "Sted"),
+    note: String(raw.note || ""),
+    image: typeof raw.image === "string" ? raw.image : undefined
+  }));
+}
 
-  useEffect(()=>{
-    try{
-      const a=localStorage.getItem("mine-ting-items-v1");
-      const b=localStorage.getItem("mine-ting-locations-v1");
-      if(a) setItems(JSON.parse(a));
-      if(b) setLocations(JSON.parse(b));
-    }catch{}
+function normalizeItems(value: unknown): Item[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((raw: any) => ({
+    id: String(raw.id || uid()),
+    name: String(raw.name || "Uten navn"),
+    category: String(raw.category || "Annet"),
+    brand: String(raw.brand || ""),
+    model: String(raw.model || ""),
+    locationId: String(raw.locationId || ""),
+    detail: String(raw.detail || ""),
+    condition: String(raw.condition || "Brukt"),
+    value: Number(raw.value || 0),
+    paid: Number(raw.paid || 0),
+    serial: String(raw.serial || ""),
+    notes: String(raw.notes || ""),
+    image: typeof raw.image === "string" ? raw.image : undefined,
+    createdAt: String(raw.createdAt || new Date().toISOString()),
+    status: (raw.status || "I bruk") as ItemStatus,
+    loanedTo: String(raw.loanedTo || ""),
+    saleTitle: String(raw.saleTitle || ""),
+    saleDescription: String(raw.saleDescription || ""),
+    saleCategory: String(raw.saleCategory || ""),
+    salePrice: Number(raw.salePrice || 0)
+  }));
+}
+
+export default function Page() {
+  const [view, setView] = useState<View>("home");
+  const [items, setItems] = useState<Item[]>([]);
+  const [locations, setLocations] = useState<Location[]>(defaultLocations);
+  const [selectedPlaceID, setSelectedPlaceID] = useState(defaultLocations[0].id);
+  const [ready, setReady] = useState(false);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("Alle");
+  const [addOpen, setAddOpen] = useState(false);
+  const [addMode, setAddMode] = useState<AddMode>("manual");
+  const [placeOpen, setPlaceOpen] = useState(false);
+  const [saleItemID, setSaleItemID] = useState("");
+  const [toast, setToast] = useState("");
+  const [isCustomizing, setIsCustomizing] = useState(false);
+  const [cardOrder, setCardOrder] = useState<CardID[]>(homeCards.map(c => c.id));
+  const [hiddenCards, setHiddenCards] = useState<Set<CardID>>(new Set());
+  const [draggedCard, setDraggedCard] = useState<CardID | null>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    try {
+      const savedItems = localStorage.getItem("mine-ting-items-v1");
+      const savedLocations = localStorage.getItem("mine-ting-locations-v1");
+      const savedPlace = localStorage.getItem("mine-ting-selected-place-v2");
+      const savedOrder = localStorage.getItem("mine-ting-card-order-v1");
+      const savedHidden = localStorage.getItem("mine-ting-card-hidden-v1");
+      if (savedItems) setItems(normalizeItems(JSON.parse(savedItems)));
+      if (savedLocations) setLocations(normalizeLocations(JSON.parse(savedLocations)));
+      if (savedPlace) setSelectedPlaceID(savedPlace);
+      if (savedOrder) {
+        const raw = JSON.parse(savedOrder) as CardID[];
+        const valid = raw.filter(id => homeCards.some(card => card.id === id));
+        const missing = homeCards.map(c => c.id).filter(id => !valid.includes(id));
+        setCardOrder([...valid, ...missing]);
+      }
+      if (savedHidden) setHiddenCards(new Set(JSON.parse(savedHidden) as CardID[]));
+    } catch {}
     setReady(true);
-  },[]);
-  useEffect(()=>{
-    if(!ready) return;
-    localStorage.setItem("mine-ting-items-v1",JSON.stringify(items));
-    localStorage.setItem("mine-ting-locations-v1",JSON.stringify(locations));
-  },[items,locations,ready]);
+  }, []);
 
-  const filtered=useMemo(()=>{
-    const q=query.trim().toLowerCase();
-    return items.filter(i=>{
-      const loc=locations.find(l=>l.id===i.locationId)?.name||"";
-      const hit=!q||[i.name,i.category,i.brand,i.model,i.detail,i.notes,loc].join(" ").toLowerCase().includes(q);
-      return hit&&(category==="Alle"||i.category===category);
+  useEffect(() => {
+    if (!ready) return;
+    localStorage.setItem("mine-ting-items-v1", JSON.stringify(items));
+    localStorage.setItem("mine-ting-locations-v1", JSON.stringify(locations));
+    localStorage.setItem("mine-ting-selected-place-v2", selectedPlaceID);
+    localStorage.setItem("mine-ting-card-order-v1", JSON.stringify(cardOrder));
+    localStorage.setItem("mine-ting-card-hidden-v1", JSON.stringify([...hiddenCards]));
+  }, [items, locations, selectedPlaceID, cardOrder, hiddenCards, ready]);
+
+  useEffect(() => {
+    if (!locations.some(place => place.id === selectedPlaceID) && locations[0]) {
+      setSelectedPlaceID(locations[0].id);
+    }
+  }, [locations, selectedPlaceID]);
+
+  const selectedPlace = locations.find(place => place.id === selectedPlaceID) || locations[0];
+  const placeItems = useMemo(() => items.filter(item => !selectedPlace || item.locationId === selectedPlace.id), [items, selectedPlace]);
+  const filteredItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return placeItems.filter(item => {
+      const haystack = [item.name, item.brand, item.model, item.serial, item.category, item.detail, item.notes].join(" ").toLowerCase();
+      const statusOK = statusFilter === "Alle" || (item.status || "I bruk") === statusFilter;
+      return statusOK && (!q || haystack.includes(q));
     });
-  },[items,locations,query,category]);
+  }, [placeItems, query, statusFilter]);
 
-  const total=items.reduce((s,i)=>s+(Number(i.value)||0),0);
-  const selected=items.find(i=>i.id===sellId)||items[0];
-  const notify=(m:string)=>{setToast(m);window.setTimeout(()=>setToast(""),2200)};
+  const totalValue = placeItems.reduce((sum, item) => sum + Math.max(item.value || 0, item.salePrice || 0), 0);
+  const forSaleCount = placeItems.filter(item => (item.status || "I bruk") === "Til salgs").length;
+  const loanedCount = placeItems.filter(item => (item.status || "I bruk") === "Utlånt" || item.loanedTo).length;
 
-  function exportData(){
-    const blob=new Blob([JSON.stringify({version:1,items,locations},null,2)],{type:"application/json"});
-    const url=URL.createObjectURL(blob), a=document.createElement("a");
-    a.href=url; a.download=`mine-ting-backup-${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(url);
-    notify("Backup lastet ned");
-  }
-  async function importData(e:ChangeEvent<HTMLInputElement>){
-    const f=e.target.files?.[0]; if(!f) return;
-    try{
-      const d=JSON.parse(await f.text());
-      if(Array.isArray(d.items)) setItems(d.items);
-      if(Array.isArray(d.locations)) setLocations(d.locations);
-      notify("Backup importert");
-    }catch{notify("Kunne ikke lese filen")}
-    e.target.value="";
+  const notify = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2200);
+  };
+
+  function openAdd(mode: AddMode) {
+    setAddMode(mode);
+    setAddOpen(true);
   }
 
-  return <main className="shell">
-    <aside className="side">
-      <div className="brand"><span>M</span><div><b>Mine Ting</b><small>Mine Apper</small></div></div>
-      <nav>
-        <Nav active={view==="home"} icon="⌂" label="Oversikt" onClick={()=>setView("home")}/>
-        <Nav active={view==="items"} icon="▦" label="Mine ting" badge={items.length} onClick={()=>setView("items")}/>
-        <Nav active={view==="locations"} icon="⌖" label="Steder" badge={locations.length} onClick={()=>setView("locations")}/>
-        <Nav active={view==="sell"} icon="◈" label="Selg" onClick={()=>setView("sell")}/>
-      </nav>
-      <div className="sideFoot">
-        <button onClick={exportData}>⇩ Eksporter backup</button>
-        <button onClick={()=>importRef.current?.click()}>⇧ Importer backup</button>
-        <input ref={importRef} hidden type="file" accept="application/json" onChange={importData}/>
-        <small>Første versjon lagrer data lokalt i nettleseren.</small>
+  function exportData() {
+    const blob = new Blob([JSON.stringify({ version: 2, items, locations }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `mine-ting-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    notify("Sikkerhetskopi eksportert");
+  }
+
+  async function importData(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (Array.isArray(data.items)) setItems(normalizeItems(data.items));
+      if (Array.isArray(data.locations)) setLocations(normalizeLocations(data.locations));
+      notify("Sikkerhetskopi importert");
+    } catch {
+      notify("Kunne ikke lese sikkerhetskopien");
+    }
+    event.target.value = "";
+  }
+
+  function activateCard(id: CardID) {
+    switch (id) {
+      case "items": setView("items"); break;
+      case "search": setView("items"); window.setTimeout(() => document.getElementById("item-search")?.focus(), 80); break;
+      case "camera": openAdd("camera"); break;
+      case "addItem": openAdd("manual"); break;
+      case "sell": setSaleItemID(""); setView("sell"); break;
+      case "loans": setView("more"); window.setTimeout(() => document.getElementById("loan-section")?.scrollIntoView({ behavior: "smooth" }), 80); break;
+      case "value": setView("more"); window.setTimeout(() => document.getElementById("value-section")?.scrollIntoView({ behavior: "smooth" }), 80); break;
+      case "backup": exportData(); break;
+      case "documents": notify("Dokumenter kommer i neste web-utvidelse"); break;
+      case "photos": notify("Bildeoversikt kommer i neste web-utvidelse"); break;
+      case "sharing": notify("Deling mellom brukere kobles på når skylagringen er klar"); break;
+    }
+  }
+
+  function moveDragged(over: CardID) {
+    if (!draggedCard || draggedCard === over) return;
+    setCardOrder(current => {
+      const next = [...current];
+      const from = next.indexOf(draggedCard);
+      const to = next.indexOf(over);
+      if (from < 0 || to < 0) return current;
+      next.splice(from, 1);
+      next.splice(to, 0, draggedCard);
+      return next;
+    });
+  }
+
+  const topTitle = view === "home" ? "" : view === "items" ? "Ting" : view === "sell" ? "Selg" : view === "places" ? "Administrer steder" : "Mer";
+
+  return (
+    <main className="appRoot">
+      <div className="paperLayer" aria-hidden="true" />
+      <div className="appFrame">
+        {view !== "home" && (
+          <header className="navBar">
+            <div className="navBarSide">
+              {view === "places" ? <button className="iconButton textButton" onClick={() => setView("more")}>‹ Mer</button> : null}
+            </div>
+            <h1>{topTitle}</h1>
+            <div className="navBarSide right">
+              {view === "items" && <button className="iconButton" onClick={() => openAdd("manual")} aria-label="Legg til ting">＋</button>}
+            </div>
+          </header>
+        )}
+
+        <section className="screen">
+          {view === "home" && selectedPlace && (
+            <HomeView
+              locations={locations}
+              selectedPlace={selectedPlace}
+              setSelectedPlaceID={setSelectedPlaceID}
+              placeItems={placeItems}
+              totalValue={totalValue}
+              forSaleCount={forSaleCount}
+              loanedCount={loanedCount}
+              cardOrder={cardOrder}
+              hiddenCards={hiddenCards}
+              isCustomizing={isCustomizing}
+              setIsCustomizing={setIsCustomizing}
+              draggedCard={draggedCard}
+              setDraggedCard={setDraggedCard}
+              moveDragged={moveDragged}
+              toggleCard={id => setHiddenCards(current => {
+                const next = new Set(current);
+                if (next.has(id)) next.delete(id); else next.add(id);
+                return next;
+              })}
+              activateCard={activateCard}
+              setView={setView}
+              openPlace={() => setPlaceOpen(true)}
+              recent={placeItems.slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5)}
+            />
+          )}
+
+          {view === "items" && (
+            <ItemsView
+              items={filteredItems}
+              place={selectedPlace}
+              query={query}
+              setQuery={setQuery}
+              statusFilter={statusFilter}
+              setStatusFilter={setStatusFilter}
+              openAdd={() => openAdd("manual")}
+              remove={id => {
+                if (confirm("Slette denne gjenstanden?")) setItems(current => current.filter(item => item.id !== id));
+              }}
+              sell={id => { setSaleItemID(id); setView("sell"); }}
+            />
+          )}
+
+          {view === "sell" && (
+            <SellView
+              items={placeItems}
+              selectedID={saleItemID}
+              setSelectedID={setSaleItemID}
+              updateItem={updated => setItems(current => current.map(item => item.id === updated.id ? updated : item))}
+              notify={notify}
+              openAdd={() => openAdd("manual")}
+            />
+          )}
+
+          {view === "more" && selectedPlace && (
+            <MoreView
+              place={selectedPlace}
+              items={placeItems}
+              totalValue={totalValue}
+              loanedCount={loanedCount}
+              setView={setView}
+              exportData={exportData}
+              importBackup={() => importRef.current?.click()}
+              notify={notify}
+            />
+          )}
+
+          {view === "places" && (
+            <PlacesView
+              locations={locations}
+              items={items}
+              selectedPlaceID={selectedPlaceID}
+              setSelectedPlaceID={setSelectedPlaceID}
+              remove={id => {
+                if (items.some(item => item.locationId === id)) return alert("Flytt eller slett ting som er registrert på dette stedet først.");
+                if (confirm("Slette stedet?")) setLocations(current => current.filter(place => place.id !== id));
+              }}
+              openAdd={() => setPlaceOpen(true)}
+            />
+          )}
+        </section>
+
+        <TabBar
+          view={view}
+          setView={setView}
+          quick={() => openAdd("manual")}
+        />
       </div>
-    </aside>
 
-    <section className="content">
-      <header className="top">
-        <div><span className="eyebrow">DITT HJEM, I ORDEN</span><h1>{view==="home"?"Hei! Hva leter du etter?":view==="items"?"Mine ting":view==="locations"?"Steder i huset":"Gjør en ting klar for salg"}</h1></div>
-        <button className="primary" onClick={()=>setAddOpen(true)}>＋ Legg til ting</button>
-      </header>
+      {addOpen && (
+        <AddItemSheet
+          mode={addMode}
+          locations={locations}
+          preferredPlaceID={selectedPlaceID}
+          close={() => setAddOpen(false)}
+          save={item => {
+            setItems(current => [item, ...current]);
+            setAddOpen(false);
+            notify("Gjenstanden er lagret");
+          }}
+        />
+      )}
 
-      {view==="home"&&<Home items={items} locations={locations} total={total} query={query} setQuery={setQuery} setView={setView} openAdd={()=>setAddOpen(true)}/>}
-      {view==="items"&&<Items items={filtered} all={items} locations={locations} query={query} setQuery={setQuery} category={category} setCategory={setCategory} openAdd={()=>setAddOpen(true)} remove={id=>{if(confirm("Slette denne gjenstanden?"))setItems(p=>p.filter(i=>i.id!==id))}} sell={id=>{setSellId(id);setView("sell")}}/>}
-      {view==="locations"&&<Locations items={items} locations={locations} setLocations={setLocations} open={()=>setLocOpen(true)}/>}
-      {view==="sell"&&<Sell items={items} locations={locations} selected={selected} sellId={sellId} setSellId={setSellId} notify={notify} openAdd={()=>setAddOpen(true)}/>}
-    </section>
+      {placeOpen && (
+        <AddPlaceSheet
+          close={() => setPlaceOpen(false)}
+          save={place => {
+            setLocations(current => [...current, place]);
+            setSelectedPlaceID(place.id);
+            setPlaceOpen(false);
+            notify("Stedet er lagt til");
+          }}
+        />
+      )}
 
-    <nav className="bottom">
-      <Nav active={view==="home"} icon="⌂" label="Oversikt" onClick={()=>setView("home")}/>
-      <Nav active={view==="items"} icon="▦" label="Ting" onClick={()=>setView("items")}/>
-      <button className="plus" onClick={()=>setAddOpen(true)}>＋</button>
-      <Nav active={view==="locations"} icon="⌖" label="Steder" onClick={()=>setView("locations")}/>
-      <Nav active={view==="sell"} icon="◈" label="Selg" onClick={()=>setView("sell")}/>
-    </nav>
-
-    {addOpen&&<AddItem locations={locations} close={()=>setAddOpen(false)} save={item=>{setItems(p=>[item,...p]);setAddOpen(false);notify("Gjenstanden er lagret")}}/>}
-    {locOpen&&<AddLocation close={()=>setLocOpen(false)} save={loc=>{setLocations(p=>[...p,loc]);setLocOpen(false);notify("Stedet er lagt til")}}/>}
-    {toast&&<div className="toast">{toast}</div>}
-  </main>;
+      <input ref={importRef} hidden type="file" accept="application/json" onChange={importData} />
+      {toast && <div className="toast">{toast}</div>}
+    </main>
+  );
 }
 
-function Nav({active,icon,label,badge,onClick}:{active:boolean;icon:string;label:string;badge?:number;onClick:()=>void}){
-  return <button className={`nav ${active?"active":""}`} onClick={onClick}><span>{icon}</span><em>{label}</em>{badge!==undefined&&<b>{badge}</b>}</button>;
-}
+function HomeView({
+  locations, selectedPlace, setSelectedPlaceID, placeItems, totalValue, forSaleCount, loanedCount,
+  cardOrder, hiddenCards, isCustomizing, setIsCustomizing, draggedCard, setDraggedCard, moveDragged, toggleCard,
+  activateCard, setView, openPlace, recent
+}: {
+  locations: Location[];
+  selectedPlace: Location;
+  setSelectedPlaceID: (id: string) => void;
+  placeItems: Item[];
+  totalValue: number;
+  forSaleCount: number;
+  loanedCount: number;
+  cardOrder: CardID[];
+  hiddenCards: Set<CardID>;
+  isCustomizing: boolean;
+  setIsCustomizing: (value: boolean) => void;
+  draggedCard: CardID | null;
+  setDraggedCard: (id: CardID | null) => void;
+  moveDragged: (id: CardID) => void;
+  toggleCard: (id: CardID) => void;
+  activateCard: (id: CardID) => void;
+  setView: (view: View) => void;
+  openPlace: () => void;
+  recent: Item[];
+}) {
+  const visible = cardOrder.filter(id => isCustomizing || !hiddenCards.has(id));
+  return (
+    <div className="homePage iosPage">
+      <div className="homeTopActions">
+        <button className="plainLink" onClick={() => setView("places")}>Administrer steder</button>
+        <button className="circleTopButton" onClick={openPlace} aria-label="Legg til sted">＋</button>
+      </div>
 
-function Home({items,locations,total,query,setQuery,setView,openAdd}:{items:Item[];locations:Location[];total:number;query:string;setQuery:(s:string)=>void;setView:(v:View)=>void;openAdd:()=>void}){
-  return <div className="stack">
-    <section className="hero">
-      <div><span className="pill">Mine Ting</span><h2>Finn igjen det du eier.<br/>Selg det du ikke trenger.</h2><p>Registrer ting med tekst, bilde eller kamera, fortell hvor de ligger, og lag en ferdig salgsannonse når det er på tide å rydde.</p><div className="actions"><button className="light" onClick={openAdd}>📷 Registrer med kamera</button><button className="glass" onClick={openAdd}>✎ Skriv inn manuelt</button></div></div>
-      <div className="path"><div>⌂</div><b>Hvor er den?</b><span>Rom → skap → skuff → hylle</span><p><i>🛋️ Stue</i><strong>›</strong><i>TV-benk</i><strong>›</strong><i>Skuff 2</i></p></div>
-    </section>
-    <div className="search"><span>⌕</span><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Søk etter drill, julepynt, ladekabel eller kamera…" onKeyDown={e=>{if(e.key==="Enter")setView("items")}}/><button onClick={()=>setView("items")}>Søk</button></div>
-    <div className="stats"><Stat icon="▦" value={String(items.length)} label="registrerte ting"/><Stat icon="⌖" value={String(locations.length)} label="steder"/><Stat icon="kr" value={money.format(total)} label="estimert verdi"/><Stat icon="◈" value={String(items.filter(i=>i.value>0).length)} label="klare for salg"/></div>
-    <div className="cols">
-      <section className="panel"><div className="panelHead"><div><span className="eyebrow">NYLIG</span><h3>Sist registrert</h3></div><button onClick={()=>setView("items")}>Se alle →</button></div>{items.length?<div>{items.slice(0,4).map(i=><Mini key={i.id} item={i} loc={locations.find(l=>l.id===i.locationId)}/>)}</div>:<Empty title="Ingen ting registrert ennå" text="Start med noe du ofte leter etter, eller noe du vurderer å selge." button="Legg til første ting" onClick={openAdd}/>}</section>
-      <section className="panel sales"><span className="eyebrow">SMART SALG</span><h3>Fra skap til annonse</h3><p>Velg en registrert ting og få en ryddig FINN-klar annonse med tittel, kategori, beskrivelse og prisforslag.</p><div className="adMock"><span>📷</span><div><small>ANNONSEUTKAST</small><b>Tittel, tekst og prisforslag</b><em>Basert på det du har registrert</em></div></div><button className="secondary full" onClick={()=>setView("sell")}>Lag salgsannonse →</button></section>
+      <h1 className="mineTitle">Mine Ting</h1>
+
+      <div className="placeScroller" role="list" aria-label="Steder">
+        {locations.map(place => {
+          const selected = place.id === selectedPlace.id;
+          return (
+            <button className="placeChoice" key={place.id} onClick={() => setSelectedPlaceID(place.id)}>
+              <div className="placeAvatar small">
+                {place.image ? <img src={place.image} alt="" /> : <span>{place.icon || "⌂"}</span>}
+                {selected && <b className="checkDot">✓</b>}
+              </div>
+              <span className={selected ? "selectedText" : ""}>{place.name}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      <section className="profileCard glassCard">
+        <div className="placeAvatar large">{selectedPlace.image ? <img src={selectedPlace.image} alt="" /> : <span>{selectedPlace.icon || "⌂"}</span>}</div>
+        <div className="profileText">
+          <h2>{selectedPlace.name}</h2>
+          <p>{selectedPlace.kind || selectedPlace.detail || "Sted"}</p>
+          <p>{placeItems.length} ting</p>
+        </div>
+        <button className="editCircle" onClick={() => setView("places")} aria-label="Rediger sted">✎</button>
+      </section>
+
+      <div className="identityStrip">
+        <span>⌂ {selectedPlace.kind || selectedPlace.detail || "Sted"}</span>
+        {selectedPlace.note ? <span>▤ Notat</span> : null}
+      </div>
+
+      <div className="sectionHeader">
+        <h2>Hjemmekort</h2>
+        <button className={isCustomizing ? "prominentSmall" : "borderedSmall"} onClick={() => setIsCustomizing(!isCustomizing)}>
+          {isCustomizing ? "Ferdig" : "☷ Tilpass"}
+        </button>
+      </div>
+      {isCustomizing && <p className="helperText">Hold og dra kortene for å endre rekkefølge. Bruk øyet for å skjule kort du ikke trenger.</p>}
+
+      <div className="dashboardGrid">
+        {visible.map(id => {
+          const card = homeCards.find(value => value.id === id)!;
+          const badge = cardBadge(id, placeItems, forSaleCount, loanedCount);
+          return (
+            <div
+              className={`dashboardCard glassCard ${hiddenCards.has(id) ? "cardHidden" : ""} ${draggedCard === id ? "dragging" : ""}`}
+              key={id}
+              draggable={isCustomizing}
+              onDragStart={() => setDraggedCard(id)}
+              onDragOver={event => { event.preventDefault(); moveDragged(id); }}
+              onDragEnd={() => setDraggedCard(null)}
+              onClick={() => { if (!isCustomizing) activateCard(id); }}
+            >
+              {isCustomizing && <span className="dragHandle">≡</span>}
+              {isCustomizing && <button className="eyeButton" onClick={event => { event.stopPropagation(); toggleCard(id); }}>{hiddenCards.has(id) ? "◌" : "◉"}</button>}
+              {badge ? <span className="badge">{badge}</span> : null}
+              <span className="cardIcon">{card.symbol}</span>
+              <h3>{card.title}</h3>
+              <p>{card.subtitle}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="statsTwo">
+        <StatCard label="Registrerte ting" value={String(placeItems.length)} symbol="▣" />
+        <StatCard label="Anslått verdi" value={money.format(totalValue)} symbol="kr" />
+      </div>
+      <div className="statsThree">
+        <StatCard label="Understeder" value="0" symbol="▦" />
+        <StatCard label="Til salgs" value={String(forSaleCount)} symbol="◇" />
+        <StatCard label="Utlånt" value={String(loanedCount)} symbol="♙" />
+      </div>
+
+      <section className="recentSection">
+        <div className="sectionHeader">
+          <h2>Nylig registrert</h2>
+          <button className="plainLink" onClick={() => setView("items")}>Vis alle</button>
+        </div>
+        <div className="recentCard glassCard">
+          {recent.length === 0 ? (
+            <p className="emptyLine">Ingen ting er registrert på dette stedet ennå.</p>
+          ) : recent.map((item, index) => (
+            <button className="recentRow" key={item.id} onClick={() => setView("items") }>
+              <Thumbnail item={item} />
+              <span className="recentText"><b>{item.name}</b><small>{item.brand || item.category}</small></span>
+              <span className="chevron">›</span>
+              {index < recent.length - 1 && <i />}
+            </button>
+          ))}
+        </div>
+      </section>
     </div>
-  </div>;
-}
-function Stat({icon,value,label}:{icon:string;value:string;label:string}){return <div className="stat"><span>{icon}</span><div><b>{value}</b><small>{label}</small></div></div>}
-function Mini({item,loc}:{item:Item;loc?:Location}){return <div className="mini"><div>{item.image?<img src={item.image} alt=""/>:"📦"}</div><section><b>{item.name}</b><span>{loc?.name||"Uten sted"}{item.detail?` · ${item.detail}`:""}</span></section><strong>{item.value?money.format(item.value):""}</strong></div>}
-function Empty({title,text,button,onClick}:{title:string;text:string;button:string;onClick:()=>void}){return <div className="empty"><div>📦</div><h4>{title}</h4><p>{text}</p><button className="secondary" onClick={onClick}>{button}</button></div>}
-
-function Items({items,all,locations,query,setQuery,category,setCategory,openAdd,remove,sell}:{items:Item[];all:Item[];locations:Location[];query:string;setQuery:(s:string)=>void;category:string;setCategory:(s:string)=>void;openAdd:()=>void;remove:(id:string)=>void;sell:(id:string)=>void}){
-  return <div className="stack"><div className="toolbar"><div className="smallSearch">⌕<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Søk i alle ting…"/></div><select value={category} onChange={e=>setCategory(e.target.value)}><option>Alle</option>{categories.map(c=><option key={c}>{c}</option>)}</select></div>
-    {items.length?<div className="grid">{items.map(i=>{const loc=locations.find(l=>l.id===i.locationId);return <article className="card" key={i.id}><div className="photo">{i.image?<img src={i.image} alt={i.name}/>:<span>📦</span>}<em>{i.category}</em></div><div className="cardBody"><h3>{i.name}</h3><p>⌖ {loc?.name||"Uten sted"}{i.detail?` · ${i.detail}`:""}</p>{i.brand&&<small>{i.brand}{i.model?` ${i.model}`:""}</small>}<footer><b>{i.value?money.format(i.value):"Ingen verdi satt"}</b><div><button title="Lag annonse" onClick={()=>sell(i.id)}>◈</button><button title="Slett" onClick={()=>remove(i.id)}>×</button></div></footer></div></article>})}</div>:<Empty title={all.length?"Ingen treff":"Ingen ting registrert ennå"} text={all.length?"Prøv et annet søk eller filter.":"Legg til noe med kamera eller manuelt."} button="Legg til ting" onClick={openAdd}/>}
-  </div>;
+  );
 }
 
-function Locations({items,locations,setLocations,open}:{items:Item[];locations:Location[];setLocations:(f:(p:Location[])=>Location[])=>void;open:()=>void}){
-  const remove=(id:string)=>{if(items.some(i=>i.locationId===id))return alert("Flytt eller slett ting som er registrert på dette stedet først.");if(confirm("Slette stedet?"))setLocations(p=>p.filter(l=>l.id!==id))};
-  return <div className="stack"><div className="intro"><p>Lag steder som «Bod», «Skap i gangen» eller «Verktøybenk». På selve tingen kan du skrive mer presist, som «øverste hylle».</p><button className="primary" onClick={open}>＋ Nytt sted</button></div><div className="locGrid">{locations.map(l=>{const n=items.filter(i=>i.locationId===l.id).length;return <article className="locCard" key={l.id}><span>{l.icon}</span><div><h3>{l.name}</h3><p>{l.detail}</p><b>{n} ting</b></div><button onClick={()=>remove(l.id)}>×</button></article>})}</div></div>;
+function cardBadge(id: CardID, items: Item[], forSale: number, loaned: number) {
+  if (id === "items" && items.length) return String(items.length);
+  if (id === "sell" && forSale) return String(forSale);
+  if (id === "loans" && loaned) return String(loaned);
+  if (id === "photos") return String(items.filter(i => i.image).length || "") || undefined;
+  return undefined;
 }
 
-function Sell({items,locations,selected,sellId,setSellId,notify,openAdd}:{items:Item[];locations:Location[];selected?:Item;sellId:string;setSellId:(s:string)=>void;notify:(s:string)=>void;openAdd:()=>void}){
-  if(!items.length)return <Empty title="Du trenger en registrert ting først" text="Når noe er registrert kan Mine Ting gjøre opplysningene om til en salgsannonse." button="Legg til ting" onClick={openAdd}/>;
-  if(!selected)return null;
-  const loc=locations.find(l=>l.id===selected.locationId);
-  const factor:Record<string,number>={"Som ny":.72,"Pent brukt":.58,"Brukt":.43,"Godt brukt":.28};
-  const price=selected.value||Math.round((selected.paid||0)*(factor[selected.condition]||.45));
-  const title=`${selected.brand?selected.brand+" ":""}${selected.model?selected.model+" – ":""}${selected.name}`.trim();
-  const desc=`${selected.name} selges. Tilstand: ${selected.condition.toLowerCase()}.${selected.brand?` Merke: ${selected.brand}.`:""}${selected.model?` Modell: ${selected.model}.`:""}${selected.notes?` ${selected.notes.trim()}`:""}\n\nKan hentes etter avtale. Se bilder for tilstand.`;
-  const copy=async(t:string,n:string)=>{await navigator.clipboard.writeText(t);notify(`${n} kopiert`)};
-  return <div className="sellGrid"><section className="panel"><label className="label">Velg ting</label><select className="wide" value={sellId||selected.id} onChange={e=>setSellId(e.target.value)}>{items.map(i=><option value={i.id} key={i.id}>{i.name}</option>)}</select><div className="sellPreview"><div>{selected.image?<img src={selected.image} alt=""/>:"📦"}</div><section><h3>{selected.name}</h3><p>{loc?.name}{selected.detail?` · ${selected.detail}`:""}</p><span>{selected.condition}</span></section></div><div className="tip"><b>Prisforslag</b><strong>{price?money.format(price):"Ingen pris ennå"}</strong><small>En enkel beregning fra dine egne opplysninger – ikke markedsdata.</small></div></section>
-    <section className="panel"><span className="eyebrow">FINN-KLAR TEKST</span><h3>Annonseutkast</h3><Ad label="Tittel" value={title} copy={()=>copy(title,"Tittel")}/><Ad label="Kategori" value={selected.category} copy={()=>copy(selected.category,"Kategori")}/><Ad label="Pris" value={price?money.format(price):"Ikke satt"} copy={()=>copy(price?String(price):"","Pris")}/><div className="adField"><div><label>Beskrivelse</label><textarea readOnly value={desc}/></div><button onClick={()=>copy(desc,"Beskrivelse")}>Kopier</button></div><button className="primary full" onClick={()=>copy(`${title}\n\n${desc}\n\nPris: ${price?money.format(price):"Gi bud"}`,"Hele annonsen")}>Kopier hele annonsen</button><p className="fine">Mine Ting lager annonsen. Selve publiseringen på FINN gjøres hos FINN, slik at du ser og godkjenner alt før publisering.</p></section>
-  </div>;
+function StatCard({ label, value, symbol }: { label: string; value: string; symbol: string }) {
+  return <div className="statCard glassCard"><span>{symbol}</span><b>{value}</b><small>{label}</small></div>;
 }
-function Ad({label,value,copy}:{label:string;value:string;copy:()=>void}){return <div className="adField"><div><label>{label}</label><b>{value}</b></div><button onClick={copy}>Kopier</button></div>}
 
-function AddItem({locations,close,save}:{locations:Location[];close:()=>void;save:(i:Item)=>void}){
-  const [mode,setMode]=useState<"camera"|"manual">("camera");
-  const [image,setImage]=useState("");
-  const [busy,setBusy]=useState(false);
-  const [f,setF]=useState({name:"",category:"Annet",brand:"",model:"",locationId:locations[0]?.id||"",detail:"",condition:"Pent brukt",value:"",paid:"",serial:"",notes:""});
-  const file=useRef<HTMLInputElement>(null);
-  async function choose(e:ChangeEvent<HTMLInputElement>){const x=e.target.files?.[0];if(!x)return;setBusy(true);try{setImage(await compressImage(x))}finally{setBusy(false)}}
-  function done(){if(!f.name.trim())return alert("Skriv inn hva gjenstanden er.");save({id:uid(),name:f.name.trim(),category:f.category,brand:f.brand.trim(),model:f.model.trim(),locationId:f.locationId,detail:f.detail.trim(),condition:f.condition,value:Number(f.value)||0,paid:Number(f.paid)||0,serial:f.serial.trim(),notes:f.notes.trim(),image:image||undefined,createdAt:new Date().toISOString()})}
-  return <div className="backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><div className="modal"><header><div><span className="eyebrow">NY GJENSTAND</span><h2>Legg til i Mine Ting</h2></div><button onClick={close}>×</button></header><div className="tabs"><button className={mode==="camera"?"active":""} onClick={()=>setMode("camera")}>📷 Kamera / bilde</button><button className={mode==="manual"?"active":""} onClick={()=>setMode("manual")}>✎ Manuelt</button></div>{mode==="camera"&&<div className="camera" onClick={()=>file.current?.click()}>{image?<img src={image} alt="Valgt bilde"/>:<><div>📷</div><b>{busy?"Behandler bildet…":"Ta bilde eller velg fra bibliotek"}</b><span>På mobil åpnes kameraet. Bildet lagres sammen med gjenstanden.</span></>}<input ref={file} hidden type="file" accept="image/*" capture="environment" onChange={choose}/></div>}
-    <div className="form"><Field label="Hva er det? *"><input value={f.name} onChange={e=>setF({...f,name:e.target.value})} placeholder="F.eks. Makita drill"/></Field><Field label="Kategori"><select value={f.category} onChange={e=>setF({...f,category:e.target.value})}>{categories.map(c=><option key={c}>{c}</option>)}</select></Field><Field label="Merke"><input value={f.brand} onChange={e=>setF({...f,brand:e.target.value})} placeholder="Makita"/></Field><Field label="Modell"><input value={f.model} onChange={e=>setF({...f,model:e.target.value})} placeholder="DDF484"/></Field><Field label="Sted"><select value={f.locationId} onChange={e=>setF({...f,locationId:e.target.value})}>{locations.map(l=><option key={l.id} value={l.id}>{l.name}</option>)}</select></Field><Field label="Hvor nøyaktig?"><input value={f.detail} onChange={e=>setF({...f,detail:e.target.value})} placeholder="Hylle 2, blå kasse"/></Field><Field label="Tilstand"><select value={f.condition} onChange={e=>setF({...f,condition:e.target.value})}>{["Som ny","Pent brukt","Brukt","Godt brukt"].map(c=><option key={c}>{c}</option>)}</select></Field><Field label="Estimert verdi"><input inputMode="numeric" value={f.value} onChange={e=>setF({...f,value:e.target.value.replace(/\D/g,"")})} placeholder="1500"/></Field><Field label="Kjøpspris"><input inputMode="numeric" value={f.paid} onChange={e=>setF({...f,paid:e.target.value.replace(/\D/g,"")})} placeholder="Valgfritt"/></Field><Field label="Serienummer"><input value={f.serial} onChange={e=>setF({...f,serial:e.target.value})} placeholder="Valgfritt"/></Field><Field label="Notater" wide><textarea value={f.notes} onChange={e=>setF({...f,notes:e.target.value})} placeholder="Tilbehør, skader, kvittering eller annet som er greit å huske."/></Field></div>
-    <footer className="modalActions"><button className="secondary" onClick={close}>Avbryt</button><button className="primary" onClick={done}>Lagre gjenstand</button></footer></div></div>;
+function Thumbnail({ item, size = 54 }: { item: Item; size?: number }) {
+  return <span className="thumb" style={{ width: size, height: size }}>{item.image ? <img src={item.image} alt="" /> : <span>▣</span>}</span>;
 }
-function Field({label,children,wide}:{label:string;children:React.ReactNode;wide?:boolean}){return <label className={`field ${wide?"wide":""}`}><span>{label}</span>{children}</label>}
 
-function AddLocation({close,save}:{close:()=>void;save:(l:Location)=>void}){
-  const [name,setName]=useState(""),[detail,setDetail]=useState(""),[icon,setIcon]=useState("📦");
-  return <div className="backdrop"><div className="modal small"><header><div><span className="eyebrow">NYTT STED</span><h2>Hvor oppbevarer du ting?</h2></div><button onClick={close}>×</button></header><div className="form"><Field label="Ikon"><select value={icon} onChange={e=>setIcon(e.target.value)}>{["📦","🛋️","🍽️","🔧","🚪","🛏️","🏠","🧰","🗄️"].map(i=><option key={i}>{i}</option>)}</select></Field><Field label="Navn *"><input value={name} onChange={e=>setName(e.target.value)} placeholder="F.eks. Bod"/></Field><Field label="Beskrivelse" wide><input value={detail} onChange={e=>setDetail(e.target.value)} placeholder="Kasser og hyller"/></Field></div><footer className="modalActions"><button className="secondary" onClick={close}>Avbryt</button><button className="primary" onClick={()=>{if(!name.trim())return alert("Skriv inn et navn.");save({id:uid(),name:name.trim(),detail:detail.trim(),icon})}}>Legg til sted</button></footer></div></div>;
+function ItemsView({ items, place, query, setQuery, statusFilter, setStatusFilter, openAdd, remove, sell }: {
+  items: Item[];
+  place?: Location;
+  query: string;
+  setQuery: (value: string) => void;
+  statusFilter: string;
+  setStatusFilter: (value: string) => void;
+  openAdd: () => void;
+  remove: (id: string) => void;
+  sell: (id: string) => void;
+}) {
+  return (
+    <div className="iosPage listPage">
+      <div className="searchBar"><span>⌕</span><input id="item-search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Navn, merke, modell, serienummer …" /></div>
+      <div className="filterRow"><span>{place?.name || "Alle steder"}</span><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}><option>Alle</option><option>I bruk</option><option>Lagret</option><option>Til salgs</option><option>Utlånt</option></select></div>
+      {items.length === 0 ? <EmptyState title="Ingen ting registrert" text="Bruk + for å legge til den første gjenstanden." action="Legg til ting" onClick={openAdd} /> : (
+        <div className="iosList">
+          {items.map(item => (
+            <div className="iosRow itemRow" key={item.id}>
+              <Thumbnail item={item} />
+              <div className="itemText"><b>{item.name}</b><span>{item.brand || item.category}</span><small>⌖ {item.detail || place?.name || "Uten plassering"}</small></div>
+              <div className="rowRight">{item.value > 0 && <small>{money.format(item.value)}</small>}<div className="rowActions"><button onClick={() => sell(item.id)} title="Selg">◇</button><button onClick={() => remove(item.id)} title="Slett">×</button></div></div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SellView({ items, selectedID, setSelectedID, updateItem, notify, openAdd }: {
+  items: Item[];
+  selectedID: string;
+  setSelectedID: (id: string) => void;
+  updateItem: (item: Item) => void;
+  notify: (message: string) => void;
+  openAdd: () => void;
+}) {
+  const selected = items.find(item => item.id === selectedID);
+  if (!items.length) return <div className="iosPage"><EmptyState title="Ingen ting å selge" text="Registrer en ting først, så kan Mine Ting lage annonseutkastet." action="Legg til ting" onClick={openAdd} /></div>;
+  if (selected) return <SaleEditor item={selected} back={() => setSelectedID("")} save={updateItem} notify={notify} />;
+  return (
+    <div className="iosPage listPage">
+      <div className="iosList introList">
+        <div className="iosRow introRow"><span className="roundIcon">◇</span><div><b>Gjør ting klare for salg</b><p>Velg en gjenstand. Mine Ting bruker registrerte bilder, merke, modell, tilstand, kjøpsopplysninger og verdi til å lage et annonseutkast.</p></div></div>
+      </div>
+      <div className="iosList">
+        {items.map(item => (
+          <button className="iosRow saleRow" key={item.id} onClick={() => setSelectedID(item.id)}>
+            <Thumbnail item={item} />
+            <span className="itemText"><b>{item.name}</b><small>{item.saleTitle ? "Annonseutkast lagret" : "Lag annonse"}</small></span>
+            {(item.status || "I bruk") === "Til salgs" && <span className="blueSymbol">◇</span>}
+            <span className="chevron">›</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SaleEditor({ item, back, save, notify }: { item: Item; back: () => void; save: (item: Item) => void; notify: (message: string) => void }) {
+  const factor: Record<string, number> = { "Som ny": 0.72, "Pent brukt": 0.58, "Brukt": 0.43, "Godt brukt": 0.28 };
+  const generatedPrice = item.salePrice || item.value || Math.round((item.paid || 0) * (factor[item.condition] || 0.45));
+  const generatedTitle = item.saleTitle || `${item.brand ? item.brand + " " : ""}${item.model ? item.model + " – " : ""}${item.name}`.trim();
+  const generatedDescription = item.saleDescription || `${item.name} selges. Tilstand: ${item.condition.toLowerCase()}.${item.brand ? ` Merke: ${item.brand}.` : ""}${item.model ? ` Modell: ${item.model}.` : ""}${item.notes ? ` ${item.notes.trim()}` : ""}\n\nKan hentes etter avtale. Se bilder for tilstand.`;
+  const [title, setTitle] = useState(generatedTitle);
+  const [category, setCategory] = useState(item.saleCategory || item.category);
+  const [price, setPrice] = useState(generatedPrice ? String(generatedPrice) : "");
+  const [description, setDescription] = useState(generatedDescription);
+
+  const full = [title, category ? `Kategori: ${category}` : "", price ? `Pris: ${price} kr` : "", description].filter(Boolean).join("\n\n");
+  function persist() {
+    save({ ...item, saleTitle: title.trim(), saleCategory: category.trim(), salePrice: Number(price) || 0, saleDescription: description.trim(), status: "Til salgs" });
+    notify("Annonseutkast lagret");
+  }
+  async function copy() {
+    await navigator.clipboard.writeText(full);
+    notify("Annonsen er kopiert");
+  }
+  return (
+    <div className="iosPage formPage">
+      <div className="inlineNav"><button className="plainLink" onClick={back}>‹ Selg</button><b>Lag annonse</b><button className="plainLink" onClick={persist}>Lagre</button></div>
+      <div className="formGroup">
+        <div className="summaryRow"><Thumbnail item={item} size={64} /><div><b>{item.name}</b><small>Se gjennom og rediger før du bruker annonsen.</small></div></div>
+      </div>
+      <div className="groupLabel">ANNONSE</div>
+      <div className="formGroup compactFields">
+        <label><span>Tittel</span><textarea value={title} onChange={e => setTitle(e.target.value)} rows={2} /></label>
+        <label><span>Kategoriforslag</span><input value={category} onChange={e => setCategory(e.target.value)} /></label>
+        <label><span>Pris</span><input inputMode="numeric" value={price} onChange={e => setPrice(e.target.value.replace(/\D/g, ""))} /></label>
+        <label><span>Beskrivelse</span><textarea value={description} onChange={e => setDescription(e.target.value)} rows={9} /></label>
+      </div>
+      <div className="groupLabel">HANDLINGER</div>
+      <div className="formGroup actionGroup">
+        <button onClick={copy}>▤ <span>Kopier annonsetekst</span><b>›</b></button>
+        <button onClick={() => { persist(); window.open("https://www.finn.no", "_blank", "noopener,noreferrer"); }}>⌁ <span>Åpne FINN</span><b>›</b></button>
+      </div>
+      <p className="formFootnote">Mine Ting lager et utkast. Du går gjennom opplysningene og fullfører publiseringen hos FINN.</p>
+    </div>
+  );
+}
+
+function MoreView({ place, items, totalValue, loanedCount, setView, exportData, importBackup, notify }: {
+  place: Location;
+  items: Item[];
+  totalValue: number;
+  loanedCount: number;
+  setView: (view: View) => void;
+  exportData: () => void;
+  importBackup: () => void;
+  notify: (message: string) => void;
+}) {
+  return (
+    <div className="iosPage listPage morePage">
+      <div className="groupLabel">{place.name.toUpperCase()}</div>
+      <div className="iosList menuList">
+        <MenuRow symbol={place.icon || "⌂"} label="Sted" onClick={() => setView("places")} />
+        <MenuRow symbol="▣" label="Ting" value={`${items.length}`} onClick={() => setView("items")} />
+        <MenuRow symbol="▧" label="Bilder" value={`${items.filter(item => item.image).length}`} onClick={() => notify("Bildeoversikt kommer i neste web-utvidelse")} />
+        <MenuRow symbol="▤" label="Dokumenter" onClick={() => notify("Dokumenter kommer i neste web-utvidelse")} />
+        <MenuRow symbol="⊕" label={`Del ${place.name}`} onClick={() => notify("Deling kobles på sammen med skylagring")} />
+      </div>
+
+      <div className="groupLabel">MINE TING</div>
+      <div className="iosList menuList">
+        <MenuRow symbol="☷" label="Administrer steder" onClick={() => setView("places")} />
+        <MenuRow symbol="♙" label="Utlånt" value={`${loanedCount}`} onClick={() => document.getElementById("loan-section")?.scrollIntoView({ behavior: "smooth" })} />
+        <MenuRow symbol="↗" label="Verdioversikt" value={money.format(totalValue)} onClick={() => document.getElementById("value-section")?.scrollIntoView({ behavior: "smooth" })} />
+        <MenuRow symbol="⇩" label="Sikkerhetskopi" onClick={exportData} />
+        <MenuRow symbol="⇧" label="Importer sikkerhetskopi" onClick={importBackup} />
+        <MenuRow symbol="⚙" label="Innstillinger" onClick={() => notify("Webinnstillinger utvides senere")} />
+      </div>
+
+      <section id="loan-section" className="overviewPanel glassCard">
+        <span className="blueSymbol">♙</span><div><b>Utlånt</b><p>{loanedCount === 0 ? "Ingen ting er registrert som utlånt." : `${loanedCount} ting er registrert som utlånt.`}</p></div>
+      </section>
+      <section id="value-section" className="overviewPanel glassCard">
+        <span className="blueSymbol">↗</span><div><b>Verdioversikt</b><p>Anslått verdi for {place.name}: <strong>{money.format(totalValue)}</strong></p></div>
+      </section>
+    </div>
+  );
+}
+
+function MenuRow({ symbol, label, value, onClick }: { symbol: string; label: string; value?: string; onClick: () => void }) {
+  return <button className="iosRow menuRow" onClick={onClick}><span className="menuSymbol">{symbol}</span><b>{label}</b><span className="menuValue">{value}</span><span className="chevron">›</span></button>;
+}
+
+function PlacesView({ locations, items, selectedPlaceID, setSelectedPlaceID, remove, openAdd }: {
+  locations: Location[];
+  items: Item[];
+  selectedPlaceID: string;
+  setSelectedPlaceID: (id: string) => void;
+  remove: (id: string) => void;
+  openAdd: () => void;
+}) {
+  return (
+    <div className="iosPage listPage">
+      <div className="sectionHeader"><p className="helperText">Hovedsteder fungerer som profiler i Mine Ting. Velg for eksempel Stue, Kjøkken, Bod eller Garasje.</p><button className="borderedSmall" onClick={openAdd}>＋ Nytt sted</button></div>
+      <div className="iosList placeList">
+        {locations.map(place => {
+          const count = items.filter(item => item.locationId === place.id).length;
+          const selected = place.id === selectedPlaceID;
+          return <div className="iosRow" key={place.id}><div className="placeAvatar listAvatar">{place.image ? <img src={place.image} alt="" /> : <span>{place.icon || "⌂"}</span>}</div><button className="placeMain" onClick={() => setSelectedPlaceID(place.id)}><b>{place.name}</b><small>{place.kind || place.detail || "Sted"} · {count} ting</small></button>{selected && <span className="blueSymbol">✓</span>}<button className="deleteButton" onClick={() => remove(place.id)}>×</button></div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TabBar({ view, setView, quick }: { view: View; setView: (view: View) => void; quick: () => void }) {
+  const tab = view === "places" ? "more" : view;
+  return (
+    <nav className="tabBar">
+      <Tab active={tab === "home"} symbol="⌂" label="Hjem" onClick={() => setView("home")} />
+      <Tab active={tab === "items"} symbol="▣" label="Ting" onClick={() => setView("items")} />
+      <button className="quickTab" onClick={quick} aria-label="Legg til"><span>＋</span><small>Legg til</small></button>
+      <Tab active={tab === "sell"} symbol="◇" label="Selg" onClick={() => setView("sell")} />
+      <Tab active={tab === "more"} symbol="•••" label="Mer" onClick={() => setView("more")} />
+    </nav>
+  );
+}
+
+function Tab({ active, symbol, label, onClick }: { active: boolean; symbol: string; label: string; onClick: () => void }) {
+  return <button className={`tab ${active ? "active" : ""}`} onClick={onClick}><span>{symbol}</span><small>{label}</small></button>;
+}
+
+function EmptyState({ title, text, action, onClick }: { title: string; text: string; action: string; onClick: () => void }) {
+  return <div className="emptyState"><span>▣</span><h2>{title}</h2><p>{text}</p><button className="primaryButton" onClick={onClick}>{action}</button></div>;
+}
+
+function AddItemSheet({ mode, locations, preferredPlaceID, close, save }: { mode: AddMode; locations: Location[]; preferredPlaceID: string; close: () => void; save: (item: Item) => void }) {
+  const [activeMode, setActiveMode] = useState<AddMode>(mode);
+  const [image, setImage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [analysisMessage, setAnalysisMessage] = useState("");
+  const [form, setForm] = useState({
+    name: "", category: "Annet", brand: "", model: "", locationId: preferredPlaceID || locations[0]?.id || "", detail: "",
+    condition: "Pent brukt", value: "", paid: "", serial: "", notes: "", status: "I bruk" as ItemStatus, loanedTo: ""
+  });
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function choose(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setBusy(true);
+    try { setImage(await compressImage(file)); setAnalysisMessage("Bilde lagt til. Fyll inn eller kontroller opplysningene under."); }
+    finally { setBusy(false); }
+  }
+
+  function done() {
+    if (!form.name.trim()) return alert("Skriv inn hva gjenstanden er.");
+    save({
+      id: uid(), name: form.name.trim(), category: form.category, brand: form.brand.trim(), model: form.model.trim(), locationId: form.locationId,
+      detail: form.detail.trim(), condition: form.condition, value: Number(form.value) || 0, paid: Number(form.paid) || 0, serial: form.serial.trim(),
+      notes: form.notes.trim(), image: image || undefined, createdAt: new Date().toISOString(), status: form.status, loanedTo: form.loanedTo.trim()
+    });
+  }
+
+  return (
+    <div className="sheetBackdrop" onMouseDown={event => { if (event.currentTarget === event.target) close(); }}>
+      <div className="sheet">
+        <header className="sheetHeader"><button className="plainLink" onClick={close}>Avbryt</button><b>Legg til ting</b><button className="plainLink" onClick={done}>Lagre</button></header>
+        <div className="segmented"><button className={activeMode === "camera" ? "active" : ""} onClick={() => setActiveMode("camera")}>◎ Kamera</button><button className={activeMode === "manual" ? "active" : ""} onClick={() => setActiveMode("manual")}>＋ Manuelt</button></div>
+        {activeMode === "camera" && (
+          <button className="cameraBox" onClick={() => fileRef.current?.click()}>
+            {image ? <img src={image} alt="Valgt bilde" /> : <><span>◎</span><b>{busy ? "Behandler bildet …" : "Ta bilde eller velg fra bibliotek"}</b><small>På mobil kan kameraet åpnes direkte.</small></>}
+          </button>
+        )}
+        <input ref={fileRef} hidden type="file" accept="image/*" capture="environment" onChange={choose} />
+        {analysisMessage && <p className="analysisMessage">{analysisMessage}</p>}
+
+        <div className="groupLabel">GRUNNLEGGENDE</div>
+        <div className="formGroup compactFields">
+          <Field label="Navn *"><input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="F.eks. Makita drill" /></Field>
+          <Field label="Kategori"><select value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>{categories.map(category => <option key={category}>{category}</option>)}</select></Field>
+          <Field label="Merke"><input value={form.brand} onChange={e => setForm({ ...form, brand: e.target.value })} placeholder="Makita" /></Field>
+          <Field label="Modell"><input value={form.model} onChange={e => setForm({ ...form, model: e.target.value })} placeholder="DDF484" /></Field>
+          <Field label="Serienummer"><input value={form.serial} onChange={e => setForm({ ...form, serial: e.target.value })} /></Field>
+        </div>
+
+        <div className="groupLabel">PLASSERING</div>
+        <div className="formGroup compactFields">
+          <Field label="Sted"><select value={form.locationId} onChange={e => setForm({ ...form, locationId: e.target.value })}>{locations.map(place => <option key={place.id} value={place.id}>{place.name}</option>)}</select></Field>
+          <Field label="Hvor nøyaktig?"><input value={form.detail} onChange={e => setForm({ ...form, detail: e.target.value })} placeholder="Hylle 2, blå kasse" /></Field>
+        </div>
+
+        <div className="groupLabel">VERDI OG STATUS</div>
+        <div className="formGroup compactFields">
+          <Field label="Tilstand"><select value={form.condition} onChange={e => setForm({ ...form, condition: e.target.value })}>{["Som ny", "Pent brukt", "Brukt", "Godt brukt"].map(value => <option key={value}>{value}</option>)}</select></Field>
+          <Field label="Status"><select value={form.status} onChange={e => setForm({ ...form, status: e.target.value as ItemStatus })}>{["I bruk", "Lagret", "Til salgs", "Utlånt"].map(value => <option key={value}>{value}</option>)}</select></Field>
+          <Field label="Kjøpspris"><input inputMode="numeric" value={form.paid} onChange={e => setForm({ ...form, paid: e.target.value.replace(/\D/g, "") })} /></Field>
+          <Field label="Anslått verdi"><input inputMode="numeric" value={form.value} onChange={e => setForm({ ...form, value: e.target.value.replace(/\D/g, "") })} /></Field>
+          {form.status === "Utlånt" && <Field label="Lånt ut til"><input value={form.loanedTo} onChange={e => setForm({ ...form, loanedTo: e.target.value })} /></Field>}
+        </div>
+
+        <div className="groupLabel">NOTATER</div>
+        <div className="formGroup compactFields"><Field label="Beskrivelse og notater"><textarea rows={5} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Tilbehør, skader, kvittering eller annet som er greit å huske." /></Field></div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label><span>{label}</span>{children}</label>;
+}
+
+function AddPlaceSheet({ close, save }: { close: () => void; save: (place: Location) => void }) {
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState("Rom");
+  const [note, setNote] = useState("");
+  const [image, setImage] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const symbols: Record<string, string> = { Rom: "⌂", Bod: "▦", Garasje: "▣", Skap: "▤", Annet: "○" };
+  async function choose(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (file) setImage(await compressImage(file));
+  }
+  function done() {
+    if (!name.trim()) return alert("Skriv inn et navn på stedet.");
+    save({ id: uid(), name: name.trim(), detail: kind, kind, icon: symbols[kind] || "○", note: note.trim(), image: image || undefined });
+  }
+  return (
+    <div className="sheetBackdrop" onMouseDown={event => { if (event.currentTarget === event.target) close(); }}>
+      <div className="sheet smallSheet">
+        <header className="sheetHeader"><button className="plainLink" onClick={close}>Avbryt</button><b>Legg til sted</b><button className="plainLink" onClick={done}>Lagre</button></header>
+        <button className="avatarPicker" onClick={() => fileRef.current?.click()}>{image ? <img src={image} alt="" /> : <span>{symbols[kind]}</span>}<small>Velg bilde</small></button>
+        <input ref={fileRef} hidden type="file" accept="image/*" onChange={choose} />
+        <div className="groupLabel">STED</div>
+        <div className="formGroup compactFields">
+          <Field label="Navn"><input value={name} onChange={e => setName(e.target.value)} placeholder="F.eks. Stue" /></Field>
+          <Field label="Type"><select value={kind} onChange={e => setKind(e.target.value)}>{Object.keys(symbols).map(value => <option key={value}>{value}</option>)}</select></Field>
+          <Field label="Notat"><textarea rows={4} value={note} onChange={e => setNote(e.target.value)} placeholder="Valgfritt" /></Field>
+        </div>
+      </div>
+    </div>
+  );
 }
