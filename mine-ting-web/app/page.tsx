@@ -118,6 +118,7 @@ export default function Page(){
   const [placeOpen,setPlaceOpen]=useState(false);
   const [accountOpen,setAccountOpen]=useState(false);
   const [saleItemID,setSaleItemID]=useState("");
+  const [editItemID,setEditItemID]=useState("");
   const [toast,setToast]=useState("");
   const [isCustomizing,setIsCustomizing]=useState(false);
   const [cardOrder,setCardOrder]=useState<CardID[]>(homeCards.map(c=>c.id));
@@ -333,7 +334,7 @@ export default function Page(){
       {view!=="home"&&<header className="navBar"><div className="navBarSide">{view==="places"?<button className="iconButton textButton" onClick={()=>setView("more")}>‹ Mer</button>:null}</div><h1>{topTitle}</h1><div className="navBarSide right">{view==="items"&&<button className="iconButton" onClick={()=>openAdd("manual")}>＋</button>}</div></header>}
       <section className="screen">
         {view==="home"&&selectedPlace&&<HomeView locations={locations} selectedPlace={selectedPlace} setSelectedPlaceID={setSelectedPlaceID} placeItems={placeItems} totalValue={totalValue} forSaleCount={forSaleCount} loanedCount={loanedCount} cardOrder={cardOrder} hiddenCards={hiddenCards} isCustomizing={isCustomizing} setIsCustomizing={setIsCustomizing} draggedCard={draggedCard} setDraggedCard={setDraggedCard} moveDragged={moveDragged} toggleCard={id=>setHiddenCards(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next})} activateCard={activateCard} setView={setView} openPlace={openPlace} recent={placeItems.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,5)} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)}/>}
-        {view==="items"&&<ItemsView items={filteredItems} place={selectedPlace} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openAdd={()=>openAdd("manual")} remove={id=>{if(confirm("Slette denne gjenstanden?"))setItems(current=>current.filter(item=>item.id!==id))}} sell={id=>{setSaleItemID(id);setView("sell")}}/>}
+        {view==="items"&&<ItemsView items={filteredItems} place={selectedPlace} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openAdd={()=>openAdd("manual")} edit={id=>setEditItemID(id)} remove={id=>{if(confirm("Slette denne gjenstanden?"))setItems(current=>current.filter(item=>item.id!==id))}} sell={id=>{setSaleItemID(id);setView("sell")}}/>}
         {view==="sell"&&<SellView items={placeItems} selectedID={saleItemID} setSelectedID={setSaleItemID} updateItem={updated=>setItems(current=>current.map(item=>item.id===updated.id?updated:item))} notify={notify} openAdd={()=>openAdd("manual")}/>}
         {view==="more"&&selectedPlace&&<MoreView place={selectedPlace} items={placeItems} totalValue={totalValue} loanedCount={loanedCount} setView={setView} exportData={exportData} importBackup={()=>importRef.current?.click()} notify={notify} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)} createInvite={createInvite} upgrade={upgrade}/>}
         {view==="places"&&<PlacesView locations={locations} items={items} selectedPlaceID={selectedPlaceID} setSelectedPlaceID={setSelectedPlaceID} remove={id=>{if(items.some(item=>item.locationId===id))return alert("Flytt eller slett ting som er registrert på dette stedet først.");if(confirm("Slette stedet?"))setLocations(current=>current.filter(place=>place.id!==id))}} openAdd={openPlace}/>}
@@ -342,6 +343,7 @@ export default function Page(){
     </div>
 
     {addOpen&&<AddItemSheet mode={addMode} locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setAddOpen(false)} notify={notify} save={item=>{setItems(current=>[item,...current]);setAddOpen(false);notify("Gjenstanden er lagret")}}/>}
+    {editItemID&&(()=>{const item=items.find(i=>i.id===editItemID);return item?<EditItemSheet item={item} locations={locations} close={()=>setEditItemID("")} save={updated=>{setItems(current=>current.map(i=>i.id===updated.id?updated:i));setEditItemID("");notify("Endringene er lagret")}}/>:null})()}
     {bulkOpen&&<BulkScanSheet locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setBulkOpen(false)} notify={notify} saveMany={newItems=>{
       const slots=!account||isPro?newItems.length:Math.max(0,25-items.length);
       const accepted=newItems.slice(0,slots);
@@ -410,8 +412,55 @@ function cardBadge(id:CardID,items:Item[],forSale:number,loaned:number){if(id===
 function StatCard({label,value,symbol}:{label:string;value:string;symbol:string}){return <div className="statCard glassCard"><span>{symbol}</span><b>{value}</b><small>{label}</small></div>}
 function Thumbnail({item,size=54}:{item:Item;size?:number}){const src=item.image||item.images?.[0];return <span className="thumb" style={{width:size,height:size}}>{src?<img src={src} alt=""/>:<span>▣</span>}</span>}
 
-function ItemsView({items,place,query,setQuery,statusFilter,setStatusFilter,openAdd,remove,sell}:{items:Item[];place?:Location;query:string;setQuery:(v:string)=>void;statusFilter:string;setStatusFilter:(v:string)=>void;openAdd:()=>void;remove:(id:string)=>void;sell:(id:string)=>void}){
-  return <div className="iosPage listPage"><div className="searchBar"><span>⌕</span><input id="item-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Navn, merke, modell, serienummer …"/></div><div className="filterRow"><span>{place?.name||"Alle steder"}</span><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>Alle</option><option>I bruk</option><option>Lagret</option><option>Til salgs</option><option>Utlånt</option></select></div>{items.length===0?<EmptyState title="Ingen ting registrert" text="Bruk + for å legge til den første gjenstanden." action="Legg til ting" onClick={openAdd}/>:<div className="iosList">{items.map(item=><div className="iosRow itemRow" key={item.id}><Thumbnail item={item}/><div className="itemText"><b>{item.name}</b><span>{item.brand||item.category}{(item.quantity||1)>1?` · ${item.quantity} stk.`:""}</span><small>⌖ {item.detail||place?.name||"Uten plassering"}</small></div><div className="rowRight">{item.value>0&&<small>{money.format(item.value)}</small>}<div className="rowActions"><button onClick={()=>sell(item.id)}>◇</button><button onClick={()=>remove(item.id)}>×</button></div></div></div>)}</div>}</div>
+function ItemsView({items,place,query,setQuery,statusFilter,setStatusFilter,openAdd,edit,remove,sell}:{items:Item[];place?:Location;query:string;setQuery:(v:string)=>void;statusFilter:string;setStatusFilter:(v:string)=>void;openAdd:()=>void;edit:(id:string)=>void;remove:(id:string)=>void;sell:(id:string)=>void}){
+  return <div className="iosPage listPage"><div className="searchBar"><span>⌕</span><input id="item-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Navn, merke, modell, serienummer …"/></div><div className="filterRow"><span>{place?.name||"Alle steder"}</span><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>Alle</option><option>I bruk</option><option>Lagret</option><option>Til salgs</option><option>Utlånt</option></select></div>{items.length===0?<EmptyState title="Ingen ting registrert" text="Bruk + for å legge til den første gjenstanden." action="Legg til ting" onClick={openAdd}/>:<div className="iosList">{items.map(item=><div className="iosRow itemRow" key={item.id}><button className="itemEditTarget" onClick={()=>edit(item.id)} aria-label={`Rediger ${item.name}`}><Thumbnail item={item}/><div className="itemText"><b>{item.name}</b><span>{item.brand||item.category}{(item.quantity||1)>1?` · ${item.quantity} stk.`:""}</span><small>⌖ {item.detail||place?.name||"Uten plassering"}</small></div></button><div className="rowRight">{item.value>0&&<small>{money.format(item.value)}</small>}<div className="rowActions"><button title="Rediger" aria-label="Rediger" onClick={()=>edit(item.id)}>✎</button><button title="Selg" aria-label="Selg" onClick={()=>sell(item.id)}>◇</button><button title="Slett" aria-label="Slett" onClick={()=>remove(item.id)}>×</button></div></div></div>)}</div>}</div>
+}
+
+function EditItemSheet({item,locations,close,save}:{item:Item;locations:Location[];close:()=>void;save:(item:Item)=>void}){
+  const [form,setForm]=useState({
+    name:item.name||"",category:item.category||"Annet",brand:item.brand||"",model:item.model||"",
+    locationId:item.locationId||locations[0]?.id||"",detail:item.detail||"",condition:item.condition||"Brukt",
+    value:String(item.value||""),paid:String(item.paid||""),serial:item.serial||"",notes:item.notes||"",
+    status:(item.status||"I bruk") as ItemStatus,loanedTo:item.loanedTo||"",quantity:String(item.quantity||1)
+  });
+  function done(){
+    if(!form.name.trim())return alert("Skriv inn navn på gjenstanden.");
+    save({...item,
+      name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),
+      locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,
+      value:Number(form.value)||0,paid:Number(form.paid)||0,serial:form.serial.trim(),notes:form.notes.trim(),
+      status:form.status,loanedTo:form.status==="Utlånt"?form.loanedTo.trim():"",
+      quantity:Math.max(1,Number(form.quantity)||1),updatedAt:new Date().toISOString()
+    });
+  }
+  return <div className="sheetBackdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><div className="sheet">
+    <header className="sheetHeader"><button className="plainLink" onClick={close}>Avbryt</button><b>Rediger ting</b><button className="plainLink" onClick={done}>Lagre</button></header>
+    <div className="formGroup"><div className="summaryRow"><Thumbnail item={item} size={64}/><div><b>{item.name}</b><small>Endringer synkroniseres automatisk til de andre enhetene dine.</small></div></div></div>
+    <div className="groupLabel">GRUNNLEGGENDE</div>
+    <div className="formGroup compactFields">
+      <Field label="Navn *"><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
+      <Field label="Kategori"><select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{categories.map(v=><option key={v}>{v}</option>)}</select></Field>
+      <Field label="Merke"><input value={form.brand} onChange={e=>setForm({...form,brand:e.target.value})}/></Field>
+      <Field label="Modell"><input value={form.model} onChange={e=>setForm({...form,model:e.target.value})}/></Field>
+      <Field label="Serienummer"><input value={form.serial} onChange={e=>setForm({...form,serial:e.target.value})}/></Field>
+      <Field label="Antall"><input inputMode="numeric" value={form.quantity} onChange={e=>setForm({...form,quantity:e.target.value.replace(/\D/g,"")})}/></Field>
+    </div>
+    <div className="groupLabel">PLASSERING</div>
+    <div className="formGroup compactFields">
+      <Field label="Sted"><select value={form.locationId} onChange={e=>setForm({...form,locationId:e.target.value})}>{locations.map(place=><option key={place.id} value={place.id}>{place.name}</option>)}</select></Field>
+      <Field label="Hvor nøyaktig?"><input value={form.detail} onChange={e=>setForm({...form,detail:e.target.value})} placeholder="Hylle 2, blå kasse"/></Field>
+    </div>
+    <div className="groupLabel">VERDI OG STATUS</div>
+    <div className="formGroup compactFields">
+      <Field label="Tilstand"><select value={form.condition} onChange={e=>setForm({...form,condition:e.target.value})}>{["Som ny","Pent brukt","Brukt","Godt brukt"].map(v=><option key={v}>{v}</option>)}</select></Field>
+      <Field label="Status"><select value={form.status} onChange={e=>setForm({...form,status:e.target.value as ItemStatus})}>{["I bruk","Lagret","Til salgs","Utlånt"].map(v=><option key={v}>{v}</option>)}</select></Field>
+      <Field label="Kjøpspris"><input inputMode="numeric" value={form.paid} onChange={e=>setForm({...form,paid:e.target.value.replace(/\D/g,"")})}/></Field>
+      <Field label="Anslått verdi"><input inputMode="numeric" value={form.value} onChange={e=>setForm({...form,value:e.target.value.replace(/\D/g,"")})}/></Field>
+      {form.status==="Utlånt"&&<Field label="Lånt ut til"><input value={form.loanedTo} onChange={e=>setForm({...form,loanedTo:e.target.value})}/></Field>}
+    </div>
+    <div className="groupLabel">NOTATER</div>
+    <div className="formGroup compactFields"><Field label="Beskrivelse og notater"><textarea rows={6} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></Field></div>
+  </div></div>
 }
 
 function SellView({items,selectedID,setSelectedID,updateItem,notify,openAdd}:{items:Item[];selectedID:string;setSelectedID:(id:string)=>void;updateItem:(i:Item)=>void;notify:(s:string)=>void;openAdd:()=>void}){
