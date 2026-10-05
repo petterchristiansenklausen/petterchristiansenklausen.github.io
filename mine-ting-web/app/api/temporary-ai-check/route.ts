@@ -30,7 +30,8 @@ async function testModel(model: string, token: string) {
     status: response.status,
     errorType: data?.error?.type || null,
     errorMessage: data?.error?.message || null,
-    answered: Boolean(data?.choices?.[0]?.message?.content)
+    answered: Boolean(data?.choices?.[0]?.message?.content),
+    returnedModel: data?.model || null
   };
 }
 
@@ -39,15 +40,26 @@ export async function GET() {
     const token = process.env.AI_GATEWAY_API_KEY || await getVercelOidcToken();
     if (!token) return NextResponse.json({ ok:false, auth:false }, { status:503 });
 
-    const luna = await testModel("openai/gpt-5.6-luna", token);
-    const sol = luna.ok ? await testModel("openai/gpt-5.6-sol", token) : null;
+    const candidates = [
+      "google/gemini-3.5-flash-lite",
+      "google/gemini-3.6-flash",
+      "openai/gpt-5.6-luna"
+    ];
 
+    const results: Record<string, unknown> = {};
+    for (const model of candidates) {
+      const result = await testModel(model, token);
+      results[model] = result;
+      if (result.ok) break;
+    }
+
+    const workingModel = Object.entries(results).find(([, value]: any) => value?.ok)?.[0] || null;
     return NextResponse.json({
-      ok: luna.ok && (sol?.ok ?? false),
-      auth: true,
-      luna,
-      sol
-    }, { status: luna.ok && sol?.ok ? 200 : 502 });
+      ok: Boolean(workingModel),
+      auth:true,
+      workingModel,
+      results
+    }, { status: workingModel ? 200 : 502 });
   } catch (error) {
     return NextResponse.json({
       ok:false,
