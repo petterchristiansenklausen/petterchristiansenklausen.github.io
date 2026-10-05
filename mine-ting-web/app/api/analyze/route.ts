@@ -92,6 +92,13 @@ JSON-format:
     const aiData = await aiResponse.json().catch(() => ({}));
     if (!aiResponse.ok) {
       console.error("AI Gateway error", aiResponse.status, aiData);
+      if (aiData?.error?.type === "customer_verification_required") {
+        return NextResponse.json({
+          ok: false,
+          error: "AI er klar, men Vercel krever at et betalingskort registreres på Vercel-kontoen før AI Gateway kan brukes.",
+          code: "AI_GATEWAY_PAYMENT_REQUIRED"
+        }, { status: 503 });
+      }
       return NextResponse.json({ ok: false, error: "Kunne ikke analysere bildet akkurat nå. Prøv igjen." }, { status: 502 });
     }
 
