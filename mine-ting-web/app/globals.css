@@ -104,6 +104,8 @@ img{display:block;max-width:100%}
 .iosRow{position:relative;min-height:58px;display:flex;align-items:center;gap:12px;padding:10px 13px;border:0;background:transparent;width:100%;text-align:left}
 .iosRow+.iosRow:before{content:"";position:absolute;top:0;left:72px;right:0;height:1px;background:var(--ios-separator)}
 .itemRow{min-height:76px}
+.itemEditTarget{display:flex;align-items:center;gap:12px;min-width:0;flex:1;border:0;background:transparent;padding:0;text-align:left;color:inherit}
+.itemEditTarget:active{opacity:.72}
 .itemText{min-width:0;flex:1}
 .itemText b,.itemText span,.itemText small{display:block}
 .itemText b{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
