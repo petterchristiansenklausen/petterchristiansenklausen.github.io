@@ -12,7 +12,9 @@ type Item = {
 };
 type Location = { id:string; name:string; detail:string; icon:string; kind?:string; note?:string; image?:string; parentId?:string; createdAt?:string; updatedAt?:string };
 type Deletion = { id:string; deletedAt:string };
-type SnapshotData = { items:Item[]; locations:Location[]; deletionProtocolVersion:number; deletedItems:Deletion[]; deletedLocations:Deletion[] };
+type MutationKind = "upsertItem"|"deleteItem"|"upsertLocation"|"deleteLocation";
+type Mutation = { id:string; kind:MutationKind; entityID:string; createdAt:string; item?:Item; location?:Location };
+type SnapshotData = { items:Item[]; locations:Location[]; deletionProtocolVersion:number; deletedItems:Deletion[]; deletedLocations:Deletion[]; mutations:Mutation[] };
 type View = "home"|"items"|"sell"|"more"|"places";
 type AddMode = "camera"|"manual";
 type CardID = "items"|"search"|"camera"|"scanArea"|"addItem"|"sell"|"documents"|"loans"|"value"|"photos"|"sharing"|"backup";
@@ -101,6 +103,26 @@ function normalizeDeletions(value:unknown):Deletion[]{
   if(!Array.isArray(value))return [];
   return value.map((raw:any)=>({id:String(raw?.id||""),deletedAt:String(raw?.deletedAt||"")})).filter(v=>v.id&&v.deletedAt);
 }
+function normalizeMutations(value:unknown):Mutation[]{
+  if(!Array.isArray(value))return [];
+  const allowed=new Set<MutationKind>(["upsertItem","deleteItem","upsertLocation","deleteLocation"]);
+  return value.map((raw:any)=>{
+    const kind=String(raw?.kind||"") as MutationKind;
+    if(!allowed.has(kind))return null;
+    const id=String(raw?.id||"");
+    const entityID=String(raw?.entityID||"");
+    const createdAt=String(raw?.createdAt||"");
+    if(!id||!entityID||!createdAt)return null;
+    return {
+      id,kind,entityID,createdAt,
+      item:raw?.item?normalizeItems([raw.item])[0]:undefined,
+      location:raw?.location?normalizeLocations([raw.location])[0]:undefined
+    } as Mutation;
+  }).filter(Boolean) as Mutation[];
+}
+function newMutation(kind:MutationKind,entityID:string,payload?:{item?:Item;location?:Location}):Mutation{
+  return {id:uid(),kind,entityID,createdAt:new Date().toISOString(),...payload};
+}
 function stamp(value?:string){const t=Date.parse(value||"");return Number.isFinite(t)?t:0}
 function recordStamp(value:{updatedAt?:string;createdAt?:string}){return stamp(value.updatedAt)||stamp(value.createdAt)}
 function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
@@ -109,6 +131,7 @@ function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
   const remoteDeletionProtocol=Number(remote?.deletionProtocolVersion||0);
   const remoteDeletedItems=remoteDeletionProtocol>=2?normalizeDeletions(remote?.deletedItems||[]):[];
   const remoteDeletedLocations=remoteDeletionProtocol>=2?normalizeDeletions(remote?.deletedLocations||[]):[];
+  const remoteMutations=normalizeMutations(remote?.mutations||[]);
 
   function newestDeletes(a:Deletion[],b:Deletion[]){
     const map=new Map<string,Deletion>();
@@ -117,6 +140,13 @@ function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
   }
   const itemDeletes=newestDeletes(local.deletedItems,remoteDeletedItems);
   const placeDeletes=newestDeletes(local.deletedLocations,remoteDeletedLocations);
+  const mutationMap=new Map<string,Mutation>();
+  for(const mutation of [...local.mutations,...remoteMutations]){
+    const old=mutationMap.get(mutation.id);
+    if(!old||stamp(mutation.createdAt)>=stamp(old.createdAt))mutationMap.set(mutation.id,mutation);
+  }
+  const mutationCutoff=Date.now()-30*24*60*60*1000;
+  const mutations=[...mutationMap.values()].filter(m=>stamp(m.createdAt)>=mutationCutoff).sort((a,b)=>stamp(a.createdAt)-stamp(b.createdAt)).slice(-2000);
 
   const mergeRecords=<T extends {id:string;updatedAt?:string;createdAt?:string}>(a:T[],b:T[],deletes:Map<string,Deletion>)=>{
     const left=new Map(a.map(v=>[v.id,v])),right=new Map(b.map(v=>[v.id,v]));
@@ -141,7 +171,8 @@ function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
   return{
     items,locations,deletionProtocolVersion:2,
     deletedItems:[...itemDeletes.values()].filter(d=>!liveItemIDs.has(d.id)),
-    deletedLocations:[...placeDeletes.values()].filter(d=>!livePlaceIDs.has(d.id))
+    deletedLocations:[...placeDeletes.values()].filter(d=>!livePlaceIDs.has(d.id)),
+    mutations
   };
 }
 
@@ -182,6 +213,7 @@ export default function Page(){
   const [cloudReady,setCloudReady]=useState(false);
   const [deletedItems,setDeletedItems]=useState<Deletion[]>([]);
   const [deletedLocations,setDeletedLocations]=useState<Deletion[]>([]);
+  const [mutations,setMutations]=useState<Mutation[]>([]);
   const [snapshotVersion,setSnapshotVersion]=useState(1);
   const [lastCloudSync,setLastCloudSync]=useState("");
   const importRef=useRef<HTMLInputElement>(null);
@@ -210,17 +242,19 @@ export default function Page(){
           locations:normalizeLocations(JSON.parse(localStorage.getItem("mine-ting-locations-v1")||"null")),
           deletionProtocolVersion:2,
           deletedItems:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-items-v3")||"[]")),
-          deletedLocations:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-locations-v3")||"[]"))
+          deletedLocations:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-locations-v3")||"[]")),
+          mutations:normalizeMutations(JSON.parse(localStorage.getItem("mine-ting-mutations-v1")||"[]"))
         };
         const cloudData:SnapshotData={
           items:normalizeItems(snapshot.data?.items||[]),
           locations:normalizeLocations(snapshot.data?.locations||[]),
           deletionProtocolVersion:Number(snapshot.data?.deletionProtocolVersion||0),
           deletedItems:Number(snapshot.data?.deletionProtocolVersion||0)>=2?normalizeDeletions(snapshot.data?.deletedItems||[]):[],
-          deletedLocations:Number(snapshot.data?.deletionProtocolVersion||0)>=2?normalizeDeletions(snapshot.data?.deletedLocations||[]):[]
+          deletedLocations:Number(snapshot.data?.deletionProtocolVersion||0)>=2?normalizeDeletions(snapshot.data?.deletedLocations||[]):[],
+          mutations:normalizeMutations(snapshot.data?.mutations||[])
         };
-        const cloudIsEmpty=cloudData.items.length===0&&cloudData.locations.length===0&&cloudData.deletedItems.length===0&&cloudData.deletedLocations.length===0;
-        const hasLocal=localData.items.length>0||localData.locations.length>0||localData.deletedItems.length>0||localData.deletedLocations.length>0;
+        const cloudIsEmpty=cloudData.items.length===0&&cloudData.locations.length===0&&cloudData.deletedItems.length===0&&cloudData.deletedLocations.length===0&&cloudData.mutations.length===0;
+        const hasLocal=localData.items.length>0||localData.locations.length>0||localData.deletedItems.length>0||localData.deletedLocations.length>0||localData.mutations.length>0;
         const merged=cloudIsEmpty&&hasLocal?localData:mergeSnapshotData(localData,cloudData);
         let version=Number(snapshot.version||1);
         if(JSON.stringify(merged)!==JSON.stringify(cloudData)){
@@ -235,7 +269,7 @@ export default function Page(){
           }
         }
         setItems(merged.items);setLocations(merged.locations.length?merged.locations:defaultLocations);
-        setDeletedItems(merged.deletedItems);setDeletedLocations(merged.deletedLocations);
+        setDeletedItems(merged.deletedItems);setDeletedLocations(merged.deletedLocations);setMutations(merged.mutations);
         setSnapshotVersion(version);setLastCloudSync(new Date().toISOString());
       }
       setCloudState("synced"); setCloudReady(true);
@@ -258,6 +292,7 @@ export default function Page(){
       const savedHidden=localStorage.getItem("mine-ting-card-hidden-v1");
       const savedDeletedItems=localStorage.getItem("mine-ting-deleted-items-v3");
       const savedDeletedLocations=localStorage.getItem("mine-ting-deleted-locations-v3");
+      const savedMutations=localStorage.getItem("mine-ting-mutations-v1");
       if(savedItems){localItems=normalizeItems(JSON.parse(savedItems));setItems(localItems)}
       if(savedLocations){localLocations=normalizeLocations(JSON.parse(savedLocations));setLocations(localLocations)}
       if(savedPlace)setSelectedPlaceID(savedPlace);
@@ -270,6 +305,7 @@ export default function Page(){
       if(savedHidden)setHiddenCards(new Set(JSON.parse(savedHidden) as CardID[]));
       if(savedDeletedItems)setDeletedItems(normalizeDeletions(JSON.parse(savedDeletedItems)));
       if(savedDeletedLocations)setDeletedLocations(normalizeDeletions(JSON.parse(savedDeletedLocations)));
+      if(savedMutations)setMutations(normalizeMutations(JSON.parse(savedMutations)));
     }catch{}
     setReady(true);
     const savedToken=localStorage.getItem(TOKEN_KEY)||"";
@@ -296,12 +332,13 @@ export default function Page(){
     localStorage.setItem("mine-ting-card-hidden-v1",JSON.stringify([...hiddenCards]));
     localStorage.setItem("mine-ting-deleted-items-v3",JSON.stringify(deletedItems));
     localStorage.setItem("mine-ting-deleted-locations-v3",JSON.stringify(deletedLocations));
+    localStorage.setItem("mine-ting-mutations-v1",JSON.stringify(mutations));
 
     if(!token||!householdId||!cloudReady||hydrating.current)return;
     if(syncTimer.current)window.clearTimeout(syncTimer.current);
     setCloudState("saving");
     syncTimer.current=window.setTimeout(async()=>{
-      const localData:SnapshotData={items,locations,deletionProtocolVersion:2,deletedItems,deletedLocations};
+      const localData:SnapshotData={items,locations,deletionProtocolVersion:2,deletedItems,deletedLocations,mutations};
       try{
         const saved=await jsonFetch(`${API_URL}/snapshot`,{
           method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
@@ -321,7 +358,7 @@ export default function Page(){
             });
             hydrating.current=true;
             setItems(merged.items);setLocations(merged.locations.length?merged.locations:defaultLocations);
-            setDeletedItems(merged.deletedItems);setDeletedLocations(merged.deletedLocations);
+            setDeletedItems(merged.deletedItems);setDeletedLocations(merged.deletedLocations);setMutations(merged.mutations);
             setSnapshotVersion(Number(saved.version||Number(latest.version||1)+1));
             setLastCloudSync(new Date().toISOString());setCloudState("synced");
             window.setTimeout(()=>{hydrating.current=false},100);
@@ -332,7 +369,7 @@ export default function Page(){
         if(error.code==="PRO_REQUIRED")notify(error.message);
       }
     },850);
-  },[items,locations,deletedItems,deletedLocations,selectedPlaceID,cardOrder,hiddenCards,ready,token,householdId,cloudReady]);
+  },[items,locations,deletedItems,deletedLocations,mutations,selectedPlaceID,cardOrder,hiddenCards,ready,token,householdId,cloudReady]);
 
   useEffect(()=>{
     if(!locations.some(place=>place.id===selectedPlaceID)&&locations[0])setSelectedPlaceID(locations[0].id);
@@ -368,13 +405,13 @@ export default function Page(){
     setPlaceOpen(true);
   }
   function exportData(){
-    const blob=new Blob([JSON.stringify({version:5,items,locations,deletionProtocolVersion:2,deletedItems,deletedLocations},null,2)],{type:"application/json"});
+    const blob=new Blob([JSON.stringify({version:6,items,locations,deletionProtocolVersion:2,deletedItems,deletedLocations,mutations},null,2)],{type:"application/json"});
     const url=URL.createObjectURL(blob),anchor=document.createElement("a");
     anchor.href=url;anchor.download=`mine-ting-backup-${new Date().toISOString().slice(0,10)}.json`;anchor.click();URL.revokeObjectURL(url);notify("Sikkerhetskopi eksportert");
   }
   async function importData(event:ChangeEvent<HTMLInputElement>){
     const file=event.target.files?.[0];if(!file)return;
-    try{const data=JSON.parse(await file.text());if(Array.isArray(data.items))setItems(normalizeItems(data.items));if(Array.isArray(data.locations))setLocations(normalizeLocations(data.locations));const deletionProtocol=Number(data.deletionProtocolVersion||0);setDeletedItems(deletionProtocol>=2&&Array.isArray(data.deletedItems)?normalizeDeletions(data.deletedItems):[]);setDeletedLocations(deletionProtocol>=2&&Array.isArray(data.deletedLocations)?normalizeDeletions(data.deletedLocations):[]);notify("Sikkerhetskopi importert")}catch{notify("Kunne ikke lese sikkerhetskopien")}
+    try{const data=JSON.parse(await file.text());if(Array.isArray(data.items))setItems(normalizeItems(data.items));if(Array.isArray(data.locations))setLocations(normalizeLocations(data.locations));const deletionProtocol=Number(data.deletionProtocolVersion||0);setDeletedItems(deletionProtocol>=2&&Array.isArray(data.deletedItems)?normalizeDeletions(data.deletedItems):[]);setDeletedLocations(deletionProtocol>=2&&Array.isArray(data.deletedLocations)?normalizeDeletions(data.deletedLocations):[]);if(Array.isArray(data.mutations))setMutations(normalizeMutations(data.mutations));notify("Sikkerhetskopi importert")}catch{notify("Kunne ikke lese sikkerhetskopien")}
     event.target.value="";
   }
   async function logout(){
@@ -407,13 +444,21 @@ export default function Page(){
     notify("Invitasjonen er godtatt.");
   }
 
+  function queueMutation(mutation:Mutation){
+    setMutations(current=>{
+      const cutoff=Date.now()-30*24*60*60*1000;
+      return [...current.filter(m=>m.id!==mutation.id&&stamp(m.createdAt)>=cutoff),mutation].slice(-2000);
+    });
+  }
   function markItemDeleted(id:string){
     const now=new Date().toISOString();
+    queueMutation(newMutation("deleteItem",id));
     setItems(current=>current.filter(item=>item.id!==id));
     setDeletedItems(current=>[...current.filter(d=>d.id!==id),{id,deletedAt:now}]);
   }
   function markPlaceDeleted(id:string){
     const now=new Date().toISOString();
+    queueMutation(newMutation("deleteLocation",id));
     const ids=new Set<string>([id]);
     let expanded=true;
     while(expanded){
@@ -425,6 +470,8 @@ export default function Page(){
     // Match iOS semantics: deleting a place removes its subtree, but keeps the things and
     // simply makes them unplaced. Every removed place gets an explicit tombstone.
     setLocations(current=>current.filter(place=>!ids.has(place.id)));
+    const movedItems=items.filter(item=>ids.has(item.locationId)).map(item=>({...item,locationId:"",updatedAt:now}));
+    for(const moved of movedItems)queueMutation(newMutation("upsertItem",moved.id,{item:moved}));
     setItems(current=>current.map(item=>ids.has(item.locationId)?{...item,locationId:"",updatedAt:now}:item));
     setDeletedLocations(current=>{
       const kept=current.filter(d=>!ids.has(d.id));
@@ -462,24 +509,24 @@ export default function Page(){
       <section className="screen">
         {view==="home"&&selectedPlace&&<HomeView locations={locations} selectedPlace={selectedPlace} setSelectedPlaceID={setSelectedPlaceID} placeItems={placeItems} totalValue={totalValue} forSaleCount={forSaleCount} loanedCount={loanedCount} cardOrder={cardOrder} hiddenCards={hiddenCards} isCustomizing={isCustomizing} setIsCustomizing={setIsCustomizing} draggedCard={draggedCard} setDraggedCard={setDraggedCard} moveDragged={moveDragged} toggleCard={id=>setHiddenCards(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next})} activateCard={activateCard} setView={setView} openPlace={openPlace} recent={placeItems.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,5)} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)}/>}
         {view==="items"&&<ItemsView items={filteredItems} place={selectedPlace} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openAdd={()=>openAdd("manual")} edit={id=>setEditItemID(id)} remove={id=>{if(confirm("Slette denne gjenstanden?"))markItemDeleted(id)}} sell={id=>{setSaleItemID(id);setView("sell")}}/>}
-        {view==="sell"&&<SellView items={placeItems} selectedID={saleItemID} setSelectedID={setSaleItemID} updateItem={updated=>setItems(current=>current.map(item=>item.id===updated.id?updated:item))} notify={notify} openAdd={()=>openAdd("manual")}/>}
+        {view==="sell"&&<SellView items={placeItems} selectedID={saleItemID} setSelectedID={setSaleItemID} updateItem={updated=>{queueMutation(newMutation("upsertItem",updated.id,{item:updated}));setItems(current=>current.map(item=>item.id===updated.id?updated:item))}} notify={notify} openAdd={()=>openAdd("manual")}/>}
         {view==="more"&&selectedPlace&&<MoreView place={selectedPlace} items={placeItems} totalValue={totalValue} loanedCount={loanedCount} setView={setView} exportData={exportData} importBackup={()=>importRef.current?.click()} notify={notify} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)} createInvite={createInvite} upgrade={upgrade}/>}
         {view==="places"&&<PlacesView locations={locations} items={items} selectedPlaceID={selectedPlaceID} setSelectedPlaceID={setSelectedPlaceID} remove={id=>{if(confirm("Slette stedet og eventuelle understeder? Tingene beholdes, men mister plasseringen sin."))markPlaceDeleted(id)}} openAdd={openPlace}/>}
       </section>
       <TabBar view={view} setView={setView} quick={()=>openAdd("manual")}/>
     </div>
 
-    {addOpen&&<AddItemSheet mode={addMode} locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setAddOpen(false)} notify={notify} save={item=>{setItems(current=>[item,...current]);setAddOpen(false);notify("Gjenstanden er lagret")}}/>}
-    {editItemID&&(()=>{const item=items.find(i=>i.id===editItemID);return item?<EditItemSheet item={item} locations={locations} token={token} close={()=>setEditItemID("")} save={updated=>{setItems(current=>current.map(i=>i.id===updated.id?updated:i));setEditItemID("");notify("Endringene er lagret")}}/>:null})()}
+    {addOpen&&<AddItemSheet mode={addMode} locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setAddOpen(false)} notify={notify} save={item=>{queueMutation(newMutation("upsertItem",item.id,{item}));setItems(current=>[item,...current]);setAddOpen(false);notify("Gjenstanden er lagret")}}/>}
+    {editItemID&&(()=>{const item=items.find(i=>i.id===editItemID);return item?<EditItemSheet item={item} locations={locations} token={token} close={()=>setEditItemID("")} save={updated=>{queueMutation(newMutation("upsertItem",updated.id,{item:updated}));setItems(current=>current.map(i=>i.id===updated.id?updated:i));setEditItemID("");notify("Endringene er lagret")}}/>:null})()}
     {bulkOpen&&<BulkScanSheet locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setBulkOpen(false)} notify={notify} saveMany={newItems=>{
       const slots=!account||isPro?newItems.length:Math.max(0,25-items.length);
       const accepted=newItems.slice(0,slots);
-      if(accepted.length)setItems(current=>[...accepted,...current]);
+      if(accepted.length){for(const item of accepted)queueMutation(newMutation("upsertItem",item.id,{item}));setItems(current=>[...accepted,...current]);}
       setBulkOpen(false);
       if(accepted.length<newItems.length){notify(`${accepted.length} ting ble lagret. Gratisversjonen har plass til 25 ting.`);setAccountOpen(true)}
       else notify(`${accepted.length} ting ble registrert`);
     }}/>} 
-    {placeOpen&&<AddPlaceSheet token={token} close={()=>setPlaceOpen(false)} save={place=>{setLocations(current=>[...current,place]);setSelectedPlaceID(place.id);setPlaceOpen(false);notify("Stedet er lagt til")}}/>}
+    {placeOpen&&<AddPlaceSheet token={token} close={()=>setPlaceOpen(false)} save={place=>{queueMutation(newMutation("upsertLocation",place.id,{location:place}));setLocations(current=>[...current,place]);setSelectedPlaceID(place.id);setPlaceOpen(false);notify("Stedet er lagt til")}}/>}
     {accountOpen&&<AccountSheet token={token} account={account} householdId={householdId} cloudState={cloudState} lastCloudSync={lastCloudSync} close={()=>setAccountOpen(false)} onAuthenticated={async newToken=>{await bootstrapCloud(newToken);setAccountOpen(false);notify("Kontoen er koblet til Mine Ting")}} logout={logout} upgrade={upgrade} acceptInvite={acceptInvite} refresh={()=>token&&bootstrapCloud(token,householdId)}/>}
     <input ref={importRef} hidden type="file" accept="application/json" onChange={importData}/>
     {toast&&<div className="toast">{toast}</div>}
