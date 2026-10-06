@@ -340,7 +340,7 @@ export default function Page(){
 
   useEffect(()=>{
     if(!token||!householdId)return;
-    const timer=window.setInterval(()=>{if(document.visibilityState==="visible"&&!hydrating.current)bootstrapCloud(token,householdId)},60000);
+    const timer=window.setInterval(()=>{if(document.visibilityState==="visible"&&!hydrating.current)bootstrapCloud(token,householdId)},15000);
     return()=>window.clearInterval(timer);
   },[token,householdId]);
 
