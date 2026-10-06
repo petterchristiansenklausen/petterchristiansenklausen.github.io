@@ -126,8 +126,9 @@ function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
       if(l&&r)chosen=recordStamp(l)>=recordStamp(r)?l:r;
       else chosen=l||r;
       const del=deletes.get(id);
-      const chosenStamp=chosen?recordStamp(chosen):0;
-      if(del&&stamp(del.deletedAt)>=chosenStamp)continue;
+      // Delete-wins semantics: a tombstone is an explicit user action and must not
+      // be undone by an older/stale live copy from another client.
+      if(del)continue;
       if(chosen)out.push(chosen);
     }
     return out;
