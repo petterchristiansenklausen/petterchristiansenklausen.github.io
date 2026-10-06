@@ -373,7 +373,7 @@ export default function Page(){
   }
   async function importData(event:ChangeEvent<HTMLInputElement>){
     const file=event.target.files?.[0];if(!file)return;
-    try{const data=JSON.parse(await file.text());if(Array.isArray(data.items))setItems(normalizeItems(data.items));if(Array.isArray(data.locations))setLocations(normalizeLocations(data.locations));if(Array.isArray(data.deletedItems))setDeletedItems(normalizeDeletions(data.deletedItems));if(Array.isArray(data.deletedLocations))setDeletedLocations(normalizeDeletions(data.deletedLocations));notify("Sikkerhetskopi importert")}catch{notify("Kunne ikke lese sikkerhetskopien")}
+    try{const data=JSON.parse(await file.text());if(Array.isArray(data.items))setItems(normalizeItems(data.items));if(Array.isArray(data.locations))setLocations(normalizeLocations(data.locations));const deletionProtocol=Number(data.deletionProtocolVersion||0);setDeletedItems(deletionProtocol>=2&&Array.isArray(data.deletedItems)?normalizeDeletions(data.deletedItems):[]);setDeletedLocations(deletionProtocol>=2&&Array.isArray(data.deletedLocations)?normalizeDeletions(data.deletedLocations):[]);notify("Sikkerhetskopi importert")}catch{notify("Kunne ikke lese sikkerhetskopien")}
     event.target.value="";
   }
   async function logout(){
