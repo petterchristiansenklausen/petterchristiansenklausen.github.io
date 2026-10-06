@@ -91,13 +91,14 @@ function normalizeIngredient(raw: unknown, inventoryIds: Set<string>) {
   const name = cleanString(item.name, 120);
   if (!name) return null;
   const inventoryItemID = cleanString(item.inventoryItemID, 80);
-  const fromInventory = item.fromInventory === true && inventoryItemID !== "" && inventoryIds.has(inventoryItemID);
+  const modelSaysAvailable = item.fromInventory === true;
+  const fromInventory = modelSaysAvailable && (inventoryItemID === "" || inventoryIds.has(inventoryItemID));
   return {
     name,
     amount: normalizeAmount(item.amount, 1),
     unit: normalizeUnit(item.unit, item),
     fromInventory,
-    inventoryItemID: fromInventory ? inventoryItemID : null
+    inventoryItemID: fromInventory && inventoryItemID !== "" ? inventoryItemID : null
   };
 }
 
@@ -201,6 +202,7 @@ export async function POST(request: NextRequest) {
       "Du er AI-Kokk i appen Min Mat. Du skal være praktisk, nøktern og flink til å bruke det brukeren allerede har hjemme.",
       "Svar på språk-koden " + language + ". Bruk vanlige matvarer og realistiske mengder.",
       "Du skal aldri late som om en vare finnes dersom den ikke finnes i inventory. Respekter også oppgitt mengde så langt det er praktisk mulig. Hvis allowMissing er false skal du bruke bare inventory og missingIngredients skal være tom. Hvis allowMissing er true kan nødvendige manglende varer føres under missingIngredients.",
+      "Hvis et bilde er vedlagt, kan tydelig synlige matvarer regnes som tilgjengelige og markeres fromInventory=true med inventoryItemID=null. Ikke gjett på uklare eller skjulte varer.",
       "Ved oppgitte allergier skal du unngå ingredienser som åpenbart bryter med dem, men aldri garantere at en rett er allergenfri. Hold rådene matfaglige og ikke medisinske.",
       "Tillatte unit-verdier er kun: " + allowedUnits.join(", ") + ".",
       "Returner KUN gyldig JSON, uten markdown eller forklarende tekst utenfor JSON.",
@@ -290,12 +292,19 @@ export async function POST(request: NextRequest) {
     }
 
     const inventoryIds = new Set(inventory.map((item) => item.id).filter((id): id is string => Boolean(id)));
-    const suggestions = Array.isArray(parsed?.suggestions)
+    let suggestions = Array.isArray(parsed?.suggestions)
       ? parsed.suggestions
           .map((item: unknown) => normalizeSuggestion(item, inventoryIds, servings, maxMinutes))
           .filter(Boolean)
           .slice(0, 7)
       : [];
+    if (!allowMissing) {
+      suggestions = suggestions.map((suggestion: any) => ({
+        ...suggestion,
+        ingredients: suggestion.ingredients.filter((ingredient: any) => ingredient.fromInventory === true),
+        missingIngredients: []
+      }));
+    }
     const mealPlan = Array.isArray(parsed?.mealPlan)
       ? parsed.mealPlan.flatMap((raw: unknown) => {
           if (!raw || typeof raw !== "object") return [];
