@@ -12,7 +12,7 @@ type Item = {
 };
 type Location = { id:string; name:string; detail:string; icon:string; kind?:string; note?:string; image?:string; parentId?:string; createdAt?:string; updatedAt?:string };
 type Deletion = { id:string; deletedAt:string };
-type SnapshotData = { items:Item[]; locations:Location[]; deletedItems:Deletion[]; deletedLocations:Deletion[] };
+type SnapshotData = { items:Item[]; locations:Location[]; deletionProtocolVersion:number; deletedItems:Deletion[]; deletedLocations:Deletion[] };
 type View = "home"|"items"|"sell"|"more"|"places";
 type AddMode = "camera"|"manual";
 type CardID = "items"|"search"|"camera"|"scanArea"|"addItem"|"sell"|"documents"|"loans"|"value"|"photos"|"sharing"|"backup";
@@ -105,8 +105,9 @@ function recordStamp(value:{updatedAt?:string;createdAt?:string}){return stamp(v
 function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
   const remoteItems=normalizeItems(remote?.items||[]);
   const remoteLocations=normalizeLocations(remote?.locations||[]);
-  const remoteDeletedItems=normalizeDeletions(remote?.deletedItems||[]);
-  const remoteDeletedLocations=normalizeDeletions(remote?.deletedLocations||[]);
+  const remoteDeletionProtocol=Number(remote?.deletionProtocolVersion||0);
+  const remoteDeletedItems=remoteDeletionProtocol>=2?normalizeDeletions(remote?.deletedItems||[]):[];
+  const remoteDeletedLocations=remoteDeletionProtocol>=2?normalizeDeletions(remote?.deletedLocations||[]):[];
 
   function newestDeletes(a:Deletion[],b:Deletion[]){
     const map=new Map<string,Deletion>();
@@ -137,7 +138,7 @@ function mergeSnapshotData(local:SnapshotData,remote:any):SnapshotData{
   const locations=mergeRecords(local.locations,remoteLocations,placeDeletes);
   const liveItemIDs=new Set(items.map(v=>v.id)),livePlaceIDs=new Set(locations.map(v=>v.id));
   return{
-    items,locations,
+    items,locations,deletionProtocolVersion:2,
     deletedItems:[...itemDeletes.values()].filter(d=>!liveItemIDs.has(d.id)),
     deletedLocations:[...placeDeletes.values()].filter(d=>!livePlaceIDs.has(d.id))
   };
@@ -206,14 +207,16 @@ export default function Page(){
         const localData:SnapshotData={
           items:normalizeItems(JSON.parse(localStorage.getItem("mine-ting-items-v1")||"[]")),
           locations:normalizeLocations(JSON.parse(localStorage.getItem("mine-ting-locations-v1")||"null")),
-          deletedItems:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-items-v2")||"[]")),
-          deletedLocations:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-locations-v2")||"[]"))
+          deletionProtocolVersion:2,
+          deletedItems:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-items-v3")||"[]")),
+          deletedLocations:normalizeDeletions(JSON.parse(localStorage.getItem("mine-ting-deleted-locations-v3")||"[]"))
         };
         const cloudData:SnapshotData={
           items:normalizeItems(snapshot.data?.items||[]),
           locations:normalizeLocations(snapshot.data?.locations||[]),
-          deletedItems:normalizeDeletions(snapshot.data?.deletedItems||[]),
-          deletedLocations:normalizeDeletions(snapshot.data?.deletedLocations||[])
+          deletionProtocolVersion:Number(snapshot.data?.deletionProtocolVersion||0),
+          deletedItems:Number(snapshot.data?.deletionProtocolVersion||0)>=2?normalizeDeletions(snapshot.data?.deletedItems||[]):[],
+          deletedLocations:Number(snapshot.data?.deletionProtocolVersion||0)>=2?normalizeDeletions(snapshot.data?.deletedLocations||[]):[]
         };
         const cloudIsEmpty=cloudData.items.length===0&&cloudData.locations.length===0&&cloudData.deletedItems.length===0&&cloudData.deletedLocations.length===0;
         const hasLocal=localData.items.length>0||localData.locations.length>0||localData.deletedItems.length>0||localData.deletedLocations.length>0;
@@ -252,8 +255,8 @@ export default function Page(){
       const savedPlace=localStorage.getItem("mine-ting-selected-place-v2");
       const savedOrder=localStorage.getItem("mine-ting-card-order-v1");
       const savedHidden=localStorage.getItem("mine-ting-card-hidden-v1");
-      const savedDeletedItems=localStorage.getItem("mine-ting-deleted-items-v2");
-      const savedDeletedLocations=localStorage.getItem("mine-ting-deleted-locations-v2");
+      const savedDeletedItems=localStorage.getItem("mine-ting-deleted-items-v3");
+      const savedDeletedLocations=localStorage.getItem("mine-ting-deleted-locations-v3");
       if(savedItems){localItems=normalizeItems(JSON.parse(savedItems));setItems(localItems)}
       if(savedLocations){localLocations=normalizeLocations(JSON.parse(savedLocations));setLocations(localLocations)}
       if(savedPlace)setSelectedPlaceID(savedPlace);
@@ -290,14 +293,14 @@ export default function Page(){
     localStorage.setItem("mine-ting-selected-place-v2",selectedPlaceID);
     localStorage.setItem("mine-ting-card-order-v1",JSON.stringify(cardOrder));
     localStorage.setItem("mine-ting-card-hidden-v1",JSON.stringify([...hiddenCards]));
-    localStorage.setItem("mine-ting-deleted-items-v2",JSON.stringify(deletedItems));
-    localStorage.setItem("mine-ting-deleted-locations-v2",JSON.stringify(deletedLocations));
+    localStorage.setItem("mine-ting-deleted-items-v3",JSON.stringify(deletedItems));
+    localStorage.setItem("mine-ting-deleted-locations-v3",JSON.stringify(deletedLocations));
 
     if(!token||!householdId||!cloudReady||hydrating.current)return;
     if(syncTimer.current)window.clearTimeout(syncTimer.current);
     setCloudState("saving");
     syncTimer.current=window.setTimeout(async()=>{
-      const localData:SnapshotData={items,locations,deletedItems,deletedLocations};
+      const localData:SnapshotData={items,locations,deletionProtocolVersion:2,deletedItems,deletedLocations};
       try{
         const saved=await jsonFetch(`${API_URL}/snapshot`,{
           method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
@@ -364,7 +367,7 @@ export default function Page(){
     setPlaceOpen(true);
   }
   function exportData(){
-    const blob=new Blob([JSON.stringify({version:4,items,locations,deletedItems,deletedLocations},null,2)],{type:"application/json"});
+    const blob=new Blob([JSON.stringify({version:5,items,locations,deletionProtocolVersion:2,deletedItems,deletedLocations},null,2)],{type:"application/json"});
     const url=URL.createObjectURL(blob),anchor=document.createElement("a");
     anchor.href=url;anchor.download=`mine-ting-backup-${new Date().toISOString().slice(0,10)}.json`;anchor.click();URL.revokeObjectURL(url);notify("Sikkerhetskopi eksportert");
   }
