@@ -1,3 +1,4 @@
+import { getVercelOidcToken } from "@vercel/oidc";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -96,7 +97,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const token = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN;
+    const token = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || await getVercelOidcToken();
     if (!token) {
       return NextResponse.json({ error: "AI-tjenesten er ikke konfigurert." }, { status: 503 });
     }
