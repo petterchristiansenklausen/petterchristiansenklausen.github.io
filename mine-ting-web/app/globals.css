@@ -168,10 +168,10 @@ img{display:block;max-width:100%}
 .tab.active{color:var(--ios-blue)}
 .quickTab{color:var(--ios-blue)}
 .quickTab>span{width:36px;height:31px;border-radius:50%;font-size:29px;font-weight:350}
-.sheetBackdrop{position:fixed;z-index:100;inset:0;background:rgba(0,0,0,.26);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center}
-.sheet{width:min(760px,100%);max-height:94vh;overflow:auto;background:rgba(246,249,252,.98);border-radius:22px 22px 0 0;padding:8px 16px calc(24px + env(safe-area-inset-bottom));box-shadow:0 -22px 70px rgba(0,0,0,.18)}
+.sheetBackdrop{position:fixed;z-index:100;inset:0;background:rgba(0,0,0,.26);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center;padding-top:max(8px,env(safe-area-inset-top))}
+.sheet{width:min(760px,100%);max-height:calc(100dvh - max(8px,env(safe-area-inset-top)));overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;background:rgba(246,249,252,.98);border-radius:22px 22px 0 0;padding:8px 16px calc(24px + env(safe-area-inset-bottom));box-shadow:0 -22px 70px rgba(0,0,0,.18)}
 .smallSheet{width:min(560px,100%)}
-.sheetHeader{position:sticky;top:-8px;z-index:2;min-height:48px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;background:rgba(246,249,252,.94);backdrop-filter:blur(20px);margin:0 -16px;padding:8px 16px}
+.sheetHeader{position:sticky;top:0;z-index:5;min-height:48px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;background:rgba(246,249,252,.97);backdrop-filter:blur(20px);margin:-8px -16px 0;padding:8px 16px;border-bottom:1px solid rgba(60,60,67,.08)}
 .sheetHeader>b{font-size:17px;text-align:center}
 .sheetHeader>.plainLink:last-child{text-align:right}
 .segmented{display:grid;grid-template-columns:1fr 1fr;background:rgba(118,118,128,.12);padding:2px;border-radius:9px;margin:8px 0 14px}
@@ -192,7 +192,7 @@ img{display:block;max-width:100%}
   .tabBar{left:50%;transform:translateX(-50%);width:min(100%,1060px);border-left:1px solid rgba(255,255,255,.46);border-right:1px solid rgba(255,255,255,.46);border-radius:20px 20px 0 0}
   .dashboardGrid{grid-template-columns:repeat(3,minmax(145px,1fr))}
   .sheetBackdrop{align-items:center;padding:30px}
-  .sheet{border-radius:22px;max-height:90vh;padding-bottom:24px}
+  .sheet{border-radius:22px;max-height:min(90dvh,calc(100dvh - 60px));padding-bottom:24px}
 }
 @media(min-width:980px){.dashboardGrid{grid-template-columns:repeat(4,minmax(145px,1fr));}.screen{padding-top:8px}}
 @media(max-width:560px){
