@@ -162,13 +162,13 @@ export async function POST(request: NextRequest) {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "openai/gpt-5.6-sol",
+        model: "openai/gpt-5.6-luna",
         messages: [
           { role: "system", content: system },
           { role: "user", content: JSON.stringify(userPayload) }
         ],
         response_format: { type: "json_object" },
-        max_completion_tokens: action === "weekly_plan" ? 5000 : 2800
+        max_completion_tokens: action === "weekly_plan" ? 4000 : 2200
       }),
       signal: AbortSignal.timeout(28000)
     });
@@ -201,7 +201,7 @@ export async function POST(request: NextRequest) {
         answer: cleanString(parsed?.answer, 1200),
         suggestions,
         mealPlan,
-        model: gatewayBody?.model || "openai/gpt-5.6-sol"
+        model: gatewayBody?.model || "openai/gpt-5.6-luna"
       },
       { headers: { "Cache-Control": "no-store" } }
     );
