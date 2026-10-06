@@ -71,6 +71,81 @@ function stripCodeFence(text: string) {
   return value;
 }
 
+function normalizeUnit(value: unknown, raw?: Record<string, unknown>) {
+  const unit = cleanString(value, 12).toLowerCase();
+  if (allowedUnits.includes(unit)) return unit;
+  for (const candidate of allowedUnits) {
+    if (raw && Object.prototype.hasOwnProperty.call(raw, candidate)) return candidate;
+  }
+  return "stk";
+}
+
+function normalizeAmount(value: unknown, fallback = 1) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.min(n, 100000) : fallback;
+}
+
+function normalizeIngredient(raw: unknown, inventoryIds: Set<string>) {
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Record<string, unknown>;
+  const name = cleanString(item.name, 120);
+  if (!name) return null;
+  const inventoryItemID = cleanString(item.inventoryItemID, 80);
+  const fromInventory = item.fromInventory === true && inventoryItemID !== "" && inventoryIds.has(inventoryItemID);
+  return {
+    name,
+    amount: normalizeAmount(item.amount, 1),
+    unit: normalizeUnit(item.unit, item),
+    fromInventory,
+    inventoryItemID: fromInventory ? inventoryItemID : null
+  };
+}
+
+function normalizeMissingIngredient(raw: unknown) {
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Record<string, unknown>;
+  const name = cleanString(item.name, 120);
+  if (!name) return null;
+  return {
+    name,
+    amount: normalizeAmount(item.amount, 1),
+    unit: normalizeUnit(item.unit, item)
+  };
+}
+
+function normalizeSuggestion(raw: unknown, inventoryIds: Set<string>, defaultServings: number, defaultMinutes: number) {
+  if (!raw || typeof raw !== "object") return null;
+  const item = raw as Record<string, unknown>;
+  const title = cleanString(item.title, 140);
+  if (!title) return null;
+  const ingredients = Array.isArray(item.ingredients)
+    ? item.ingredients.map((x) => normalizeIngredient(x, inventoryIds)).filter(Boolean).slice(0, 16)
+    : [];
+  const missingIngredients = Array.isArray(item.missingIngredients)
+    ? item.missingIngredients.map(normalizeMissingIngredient).filter(Boolean).slice(0, 12)
+    : [];
+  const steps = Array.isArray(item.steps)
+    ? item.steps.map((x) => cleanString(x, 500)).filter(Boolean).slice(0, 10)
+    : [];
+  const tags = Array.isArray(item.tags)
+    ? item.tags.map((x) => cleanString(x, 50)).filter(Boolean).slice(0, 8)
+    : [];
+  const useSoon = Array.isArray(item.useSoon)
+    ? item.useSoon.map((x) => cleanString(x, 120)).filter(Boolean).slice(0, 8)
+    : [];
+  return {
+    title,
+    summary: cleanString(item.summary, 500),
+    servings: clampInt(item.servings, 1, 12, defaultServings),
+    minutes: clampInt(item.minutes, 1, 240, defaultMinutes),
+    ingredients,
+    missingIngredients,
+    steps,
+    tags,
+    useSoon
+  };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const expectedClientToken = process.env.MIN_MAT_CLIENT_TOKEN;
@@ -214,8 +289,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "AI-Kokk ga et svar som ikke kunne leses." }, { status: 502 });
     }
 
-    const suggestions = Array.isArray(parsed?.suggestions) ? parsed.suggestions.slice(0, 7) : [];
-    const mealPlan = Array.isArray(parsed?.mealPlan) ? parsed.mealPlan.slice(0, 7) : [];
+    const inventoryIds = new Set(inventory.map((item) => item.id).filter((id): id is string => Boolean(id)));
+    const suggestions = Array.isArray(parsed?.suggestions)
+      ? parsed.suggestions
+          .map((item: unknown) => normalizeSuggestion(item, inventoryIds, servings, maxMinutes))
+          .filter(Boolean)
+          .slice(0, 7)
+      : [];
+    const mealPlan = Array.isArray(parsed?.mealPlan)
+      ? parsed.mealPlan.flatMap((raw: unknown) => {
+          if (!raw || typeof raw !== "object") return [];
+          const entry = raw as Record<string, unknown>;
+          const suggestionIndex = clampInt(entry.suggestionIndex, 0, Math.max(0, suggestions.length - 1), 0);
+          const dayOffset = clampInt(entry.dayOffset, 0, 6, 0);
+          const slot = cleanString(entry.slot, 30).toLowerCase() || "middag";
+          return suggestions.length > 0 ? [{ dayOffset, slot, suggestionIndex }] : [];
+        }).slice(0, 7)
+      : [];
+
+    if (suggestions.length === 0) {
+      return NextResponse.json({ error: "AI-Kokk fant ingen brukbare forslag. Prøv igjen." }, { status: 502 });
+    }
 
     return NextResponse.json(
       {
