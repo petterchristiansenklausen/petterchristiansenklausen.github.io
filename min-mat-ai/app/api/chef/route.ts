@@ -85,7 +85,7 @@ function normalizeAmount(value: unknown, fallback = 1) {
   return Number.isFinite(n) && n >= 0 ? Math.min(n, 100000) : fallback;
 }
 
-function normalizeIngredient(raw: unknown, inventoryIds: Set<string>) {
+function normalizeIngredient(raw: unknown, inventoryIds: Set<string>, allowImageInventory: boolean) {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Record<string, unknown>;
   const name = cleanString(item.name, 120);
@@ -114,13 +114,13 @@ function normalizeMissingIngredient(raw: unknown) {
   };
 }
 
-function normalizeSuggestion(raw: unknown, inventoryIds: Set<string>, defaultServings: number, defaultMinutes: number) {
+function normalizeSuggestion(raw: unknown, inventoryIds: Set<string>, defaultServings: number, defaultMinutes: number, allowImageInventory: boolean) {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Record<string, unknown>;
   const title = cleanString(item.title, 140);
   if (!title) return null;
   const ingredients = Array.isArray(item.ingredients)
-    ? item.ingredients.map((x) => normalizeIngredient(x, inventoryIds)).filter(Boolean).slice(0, 16)
+    ? item.ingredients.map((x) => normalizeIngredient(x, inventoryIds, allowImageInventory)).filter(Boolean).slice(0, 16)
     : [];
   const missingIngredients = Array.isArray(item.missingIngredients)
     ? item.missingIngredients.map(normalizeMissingIngredient).filter(Boolean).slice(0, 12)
@@ -294,8 +294,24 @@ export async function POST(request: NextRequest) {
     const inventoryIds = new Set(inventory.map((item) => item.id).filter((id): id is string => Boolean(id)));
     let suggestions = Array.isArray(parsed?.suggestions)
       ? parsed.suggestions
-          .map((item: unknown) => normalizeSuggestion(item, inventoryIds, servings, maxMinutes))
+          .map((item: unknown) => normalizeSuggestion(item, inventoryIds, servings, maxMinutes, Boolean(imageDataURL)))
           .filter(Boolean)
+          .map((suggestion: any) => {
+            const merged = new Map<string, any>();
+            for (const missing of suggestion.missingIngredients || []) {
+              merged.set(cleanString(missing.name, 120).toLocaleLowerCase("nb-NO"), missing);
+            }
+            for (const ingredient of suggestion.ingredients || []) {
+              if (!ingredient.fromInventory) {
+                const key = cleanString(ingredient.name, 120).toLocaleLowerCase("nb-NO");
+                if (!merged.has(key)) {
+                  merged.set(key, { name: ingredient.name, amount: ingredient.amount, unit: ingredient.unit });
+                }
+              }
+            }
+            return { ...suggestion, missingIngredients: Array.from(merged.values()).slice(0, 12) };
+          })
+          .filter((suggestion: any) => allowMissing || suggestion.missingIngredients.length === 0)
           .slice(0, 7)
       : [];
     if (!allowMissing) {
