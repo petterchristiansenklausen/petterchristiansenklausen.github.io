@@ -3,6 +3,8 @@ import "./globals.css";
 import PwaRegister from "./PwaRegister";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://mine-ting-web.vercel.app"),
+  alternates: { canonical: "/" },
   title: "Mine Ting",
   description: "Finn igjen det du eier – og gjør det enklere å selge.",
   manifest: "/manifest.webmanifest",
