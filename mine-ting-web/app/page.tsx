@@ -414,8 +414,22 @@ export default function Page(){
   }
   function markPlaceDeleted(id:string){
     const now=new Date().toISOString();
-    setLocations(current=>current.filter(place=>place.id!==id));
-    setDeletedLocations(current=>[...current.filter(d=>d.id!==id),{id,deletedAt:now}]);
+    const ids=new Set<string>([id]);
+    let expanded=true;
+    while(expanded){
+      expanded=false;
+      for(const place of locations){
+        if(place.parentId&&ids.has(place.parentId)&&!ids.has(place.id)){ids.add(place.id);expanded=true}
+      }
+    }
+    // Match iOS semantics: deleting a place removes its subtree, but keeps the things and
+    // simply makes them unplaced. Every removed place gets an explicit tombstone.
+    setLocations(current=>current.filter(place=>!ids.has(place.id)));
+    setItems(current=>current.map(item=>ids.has(item.locationId)?{...item,locationId:"",updatedAt:now}:item));
+    setDeletedLocations(current=>{
+      const kept=current.filter(d=>!ids.has(d.id));
+      return [...kept,...[...ids].map(placeID=>({id:placeID,deletedAt:now}))];
+    });
   }
 
   function activateCard(id:CardID){
@@ -450,7 +464,7 @@ export default function Page(){
         {view==="items"&&<ItemsView items={filteredItems} place={selectedPlace} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openAdd={()=>openAdd("manual")} edit={id=>setEditItemID(id)} remove={id=>{if(confirm("Slette denne gjenstanden?"))markItemDeleted(id)}} sell={id=>{setSaleItemID(id);setView("sell")}}/>}
         {view==="sell"&&<SellView items={placeItems} selectedID={saleItemID} setSelectedID={setSaleItemID} updateItem={updated=>setItems(current=>current.map(item=>item.id===updated.id?updated:item))} notify={notify} openAdd={()=>openAdd("manual")}/>}
         {view==="more"&&selectedPlace&&<MoreView place={selectedPlace} items={placeItems} totalValue={totalValue} loanedCount={loanedCount} setView={setView} exportData={exportData} importBackup={()=>importRef.current?.click()} notify={notify} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)} createInvite={createInvite} upgrade={upgrade}/>}
-        {view==="places"&&<PlacesView locations={locations} items={items} selectedPlaceID={selectedPlaceID} setSelectedPlaceID={setSelectedPlaceID} remove={id=>{if(items.some(item=>item.locationId===id))return alert("Flytt eller slett ting som er registrert på dette stedet først.");if(confirm("Slette stedet?"))markPlaceDeleted(id)}} openAdd={openPlace}/>}
+        {view==="places"&&<PlacesView locations={locations} items={items} selectedPlaceID={selectedPlaceID} setSelectedPlaceID={setSelectedPlaceID} remove={id=>{if(confirm("Slette stedet og eventuelle understeder? Tingene beholdes, men mister plasseringen sin."))markPlaceDeleted(id)}} openAdd={openPlace}/>}
       </section>
       <TabBar view={view} setView={setView} quick={()=>openAdd("manual")}/>
     </div>
