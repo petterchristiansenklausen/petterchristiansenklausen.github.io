@@ -565,10 +565,9 @@ function EditItemSheet({item,locations,token,close,save}:{item:Item;locations:Lo
     for(const image of images.slice(0,6)){
       if(!image.startsWith("data:image/")){result.push(image);continue}
       if(!token){result.push(image);continue}
-      try{
-        const uploaded=await jsonFetch("/api/upload-image",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,token})});
-        if(uploaded.url)result.push(uploaded.url);
-      }catch{}
+      const uploaded=await jsonFetch("/api/upload-image",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,token})});
+      if(!uploaded.url)throw new Error("Kunne ikke lagre bildet.");
+      result.push(uploaded.url);
     }
     return result;
   }
@@ -576,17 +575,22 @@ function EditItemSheet({item,locations,token,close,save}:{item:Item;locations:Lo
   async function done(){
     if(!form.name.trim())return alert("Skriv inn navn på gjenstanden.");
     setBusy(true);
-    const savedImages=await storedImages();
-    save({...item,
-      name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),
-      locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,
-      value:Number(form.value)||0,paid:Number(form.paid)||0,serial:form.serial.trim(),notes:form.notes.trim(),
-      status:form.status,loanedTo:form.status==="Utlånt"?form.loanedTo.trim():"",
-      quantity:Math.max(1,Number(form.quantity)||1),
-      image:savedImages[0],images:savedImages,
-      updatedAt:new Date().toISOString()
-    });
-    setBusy(false);
+    try{
+      const savedImages=await storedImages();
+      save({...item,
+        name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),
+        locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,
+        value:Number(form.value)||0,paid:Number(form.paid)||0,serial:form.serial.trim(),notes:form.notes.trim(),
+        status:form.status,loanedTo:form.status==="Utlånt"?form.loanedTo.trim():"",
+        quantity:Math.max(1,Number(form.quantity)||1),
+        image:savedImages[0],images:savedImages,
+        updatedAt:new Date().toISOString()
+      });
+    }catch(error:any){
+      alert(error?.message||"Kunne ikke lagre alle bildene. Prøv igjen.");
+    }finally{
+      setBusy(false);
+    }
   }
   return <div className="sheetBackdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><div className="sheet">
     <header className="sheetHeader"><button className="plainLink" onClick={close}>Avbryt</button><b>Rediger ting</b><button className="plainLink" disabled={busy} onClick={done}>{busy?"Vent …":"Lagre"}</button></header>
