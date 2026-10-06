@@ -21,6 +21,7 @@ type ChefRequest = {
   maxMinutes?: number;
   allowMissing?: boolean;
   message?: string;
+  imageDataURL?: string;
   preferences?: {
     allergies?: string;
     diet?: string;
@@ -72,8 +73,14 @@ function stripCodeFence(text: string) {
 
 export async function POST(request: NextRequest) {
   try {
+    const expectedClientToken = process.env.MIN_MAT_CLIENT_TOKEN;
+    const suppliedClientToken = request.headers.get("x-minmat-client");
+    if (!expectedClientToken || suppliedClientToken !== expectedClientToken) {
+      return NextResponse.json({ error: "Ugyldig klient." }, { status: 401 });
+    }
+
     const contentLength = Number(request.headers.get("content-length") || "0");
-    if (contentLength > 200000) {
+    if (contentLength > 1500000) {
       return NextResponse.json({ error: "Forespørselen er for stor." }, { status: 413 });
     }
 
@@ -86,11 +93,16 @@ export async function POST(request: NextRequest) {
     const allowMissing = raw.allowMissing !== false;
     const language = cleanString(raw.language, 16) || "nb";
     const message = cleanString(raw.message, 1000);
+    const imageDataURL = typeof raw.imageDataURL === "string" &&
+      raw.imageDataURL.startsWith("data:image/jpeg;base64,") &&
+      raw.imageDataURL.length <= 1200000
+      ? raw.imageDataURL
+      : "";
     const allergies = cleanString(raw.preferences?.allergies, 500);
     const diet = cleanString(raw.preferences?.diet, 300);
     const dislikes = cleanString(raw.preferences?.dislikes, 300);
 
-    if (inventory.length === 0 && !message) {
+    if (inventory.length === 0 && !message && !imageDataURL) {
       return NextResponse.json(
         { error: "Legg inn mat i matlageret eller skriv hva du ønsker hjelp med." },
         { status: 400 }
@@ -153,8 +165,16 @@ export async function POST(request: NextRequest) {
       allowMissing,
       preferences: { allergies, diet, dislikes },
       message,
-      inventory
+      inventory,
+      imageAttached: Boolean(imageDataURL)
     };
+
+    const userContent: any = imageDataURL
+      ? [
+          { type: "text", text: JSON.stringify(userPayload) + "\nSe også på bildet og bruk synlige matvarer som støtte. Ikke anta at uklare eller skjulte varer finnes." },
+          { type: "image_url", image_url: { url: imageDataURL } }
+        ]
+      : JSON.stringify(userPayload);
 
     const gatewayResponse = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
       method: "POST",
@@ -166,7 +186,7 @@ export async function POST(request: NextRequest) {
         model: "openai/gpt-5.6-luna",
         messages: [
           { role: "system", content: system },
-          { role: "user", content: JSON.stringify(userPayload) }
+          { role: "user", content: userContent }
         ],
         response_format: { type: "json_object" },
         max_completion_tokens: action === "weekly_plan" ? 4000 : 2200
