@@ -452,7 +452,7 @@ export default function Page(){
     </div>
 
     {addOpen&&<AddItemSheet mode={addMode} locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setAddOpen(false)} notify={notify} save={item=>{setItems(current=>[item,...current]);setAddOpen(false);notify("Gjenstanden er lagret")}}/>}
-    {editItemID&&(()=>{const item=items.find(i=>i.id===editItemID);return item?<EditItemSheet item={item} locations={locations} close={()=>setEditItemID("")} save={updated=>{setItems(current=>current.map(i=>i.id===updated.id?updated:i));setEditItemID("");notify("Endringene er lagret")}}/>:null})()}
+    {editItemID&&(()=>{const item=items.find(i=>i.id===editItemID);return item?<EditItemSheet item={item} locations={locations} token={token} close={()=>setEditItemID("")} save={updated=>{setItems(current=>current.map(i=>i.id===updated.id?updated:i));setEditItemID("");notify("Endringene er lagret")}}/>:null})()}
     {bulkOpen&&<BulkScanSheet locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setBulkOpen(false)} notify={notify} saveMany={newItems=>{
       const slots=!account||isPro?newItems.length:Math.max(0,25-items.length);
       const accepted=newItems.slice(0,slots);
@@ -525,26 +525,80 @@ function ItemsView({items,place,query,setQuery,statusFilter,setStatusFilter,open
   return <div className="iosPage listPage"><div className="searchBar"><span>⌕</span><input id="item-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Navn, merke, modell, serienummer …"/></div><div className="filterRow"><span>{place?.name||"Alle steder"}</span><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>Alle</option><option>I bruk</option><option>Lagret</option><option>Til salgs</option><option>Utlånt</option></select></div>{items.length===0?<EmptyState title="Ingen ting registrert" text="Bruk + for å legge til den første gjenstanden." action="Legg til ting" onClick={openAdd}/>:<div className="iosList">{items.map(item=><div className="iosRow itemRow" key={item.id}><button className="itemEditTarget" onClick={()=>edit(item.id)} aria-label={`Rediger ${item.name}`}><Thumbnail item={item}/><div className="itemText"><b>{item.name}</b><span>{item.brand||item.category}{(item.quantity||1)>1?` · ${item.quantity} stk.`:""}</span><small>⌖ {item.detail||place?.name||"Uten plassering"}</small></div></button><div className="rowRight">{item.value>0&&<small>{money.format(item.value)}</small>}<div className="rowActions"><button title="Rediger" aria-label="Rediger" onClick={()=>edit(item.id)}>✎</button><button title="Selg" aria-label="Selg" onClick={()=>sell(item.id)}>◇</button><button title="Slett" aria-label="Slett" onClick={()=>remove(item.id)}>×</button></div></div></div>)}</div>}</div>
 }
 
-function EditItemSheet({item,locations,close,save}:{item:Item;locations:Location[];close:()=>void;save:(item:Item)=>void}){
+function EditItemSheet({item,locations,token,close,save}:{item:Item;locations:Location[];token:string;close:()=>void;save:(item:Item)=>void}){
   const [form,setForm]=useState({
     name:item.name||"",category:item.category||"Annet",brand:item.brand||"",model:item.model||"",
     locationId:item.locationId||locations[0]?.id||"",detail:item.detail||"",condition:item.condition||"Brukt",
     value:String(item.value||""),paid:String(item.paid||""),serial:item.serial||"",notes:item.notes||"",
     status:(item.status||"I bruk") as ItemStatus,loanedTo:item.loanedTo||"",quantity:String(item.quantity||1)
   });
-  function done(){
+  const initialImages=(item.images?.length?item.images:(item.image?[item.image]:[]))||[];
+  const [images,setImages]=useState<string[]>(initialImages.slice(0,6));
+  const [busy,setBusy]=useState(false);
+  const fileRef=useRef<HTMLInputElement>(null);
+
+  async function chooseImages(event:ChangeEvent<HTMLInputElement>){
+    const files=Array.from(event.target.files||[]).slice(0,Math.max(0,6-images.length));
+    if(!files.length)return;
+    setBusy(true);
+    try{
+      const added:string[]=[];
+      for(const file of files)added.push(await compressImage(file));
+      setImages(current=>[...current,...added].slice(0,6));
+    }finally{
+      setBusy(false);
+      event.target.value="";
+    }
+  }
+
+  function moveToFront(index:number){
+    setImages(current=>{
+      if(index<=0||index>=current.length)return current;
+      const next=[...current],chosen=next.splice(index,1)[0];
+      next.unshift(chosen);
+      return next;
+    });
+  }
+
+  async function storedImages(){
+    const result:string[]=[];
+    for(const image of images.slice(0,6)){
+      if(!image.startsWith("data:image/")){result.push(image);continue}
+      if(!token){result.push(image);continue}
+      try{
+        const uploaded=await jsonFetch("/api/upload-image",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image,token})});
+        if(uploaded.url)result.push(uploaded.url);
+      }catch{}
+    }
+    return result;
+  }
+
+  async function done(){
     if(!form.name.trim())return alert("Skriv inn navn på gjenstanden.");
+    setBusy(true);
+    const savedImages=await storedImages();
     save({...item,
       name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),
       locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,
       value:Number(form.value)||0,paid:Number(form.paid)||0,serial:form.serial.trim(),notes:form.notes.trim(),
       status:form.status,loanedTo:form.status==="Utlånt"?form.loanedTo.trim():"",
-      quantity:Math.max(1,Number(form.quantity)||1),updatedAt:new Date().toISOString()
+      quantity:Math.max(1,Number(form.quantity)||1),
+      image:savedImages[0],images:savedImages,
+      updatedAt:new Date().toISOString()
     });
+    setBusy(false);
   }
   return <div className="sheetBackdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><div className="sheet">
-    <header className="sheetHeader"><button className="plainLink" onClick={close}>Avbryt</button><b>Rediger ting</b><button className="plainLink" onClick={done}>Lagre</button></header>
-    <div className="formGroup"><div className="summaryRow"><Thumbnail item={item} size={64}/><div><b>{item.name}</b><small>Endringer synkroniseres automatisk til de andre enhetene dine.</small></div></div></div>
+    <header className="sheetHeader"><button className="plainLink" onClick={close}>Avbryt</button><b>Rediger ting</b><button className="plainLink" disabled={busy} onClick={done}>{busy?"Vent …":"Lagre"}</button></header>
+    <div className="formGroup"><div className="summaryRow"><Thumbnail item={{...item,image:images[0],images}} size={64}/><div><b>{item.name}</b><small>Endringer synkroniseres automatisk til de andre enhetene dine.</small></div></div></div>
+
+    <div className="groupLabel">BILDER</div>
+    <div className="photoPickerBlock">
+      {images.length>0?<div className="multiPhotoGrid">{images.map((image,index)=><div className="multiPhoto" key={image+"-"+index}><img src={image} alt={`Bilde ${index+1}`}/><button onClick={()=>setImages(current=>current.filter((_,i)=>i!==index))}>×</button>{index===0?<span>Hovedbilde</span>:<button className="photoMainButton" onClick={()=>moveToFront(index)}>Bruk som hovedbilde</button>}</div>)}{images.length<6&&<button className="addPhotoTile" onClick={()=>fileRef.current?.click()}>＋<small>Flere bilder</small></button>}</div>:<button className="cameraBox" onClick={()=>fileRef.current?.click()}><span>◎</span><b>Legg til bilder</b><small>Opptil 6 bilder. Første bilde brukes som hovedbilde.</small></button>}
+      <input ref={fileRef} hidden multiple type="file" accept="image/*" onChange={chooseImages}/>
+      <small className="photoCount">{images.length}/6 bilder</small>
+    </div>
+
     <div className="groupLabel">GRUNNLEGGENDE</div>
     <div className="formGroup compactFields">
       <Field label="Navn *"><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></Field>
