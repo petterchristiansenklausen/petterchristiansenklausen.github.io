@@ -22,6 +22,7 @@ type PlanInfo = { plan:"free"|"pro"; source?:string; validUntil?:string|null };
 type AccountState = { user:UserInfo; households:Household[]; plan:PlanInfo } | null;
 
 const API_URL = process.env.NEXT_PUBLIC_MINE_TING_API_URL || "";
+const APP_URL = "https://mine-ting-web.vercel.app";
 const TOKEN_KEY = "mine-ting-cloud-token-v1";
 const HOUSEHOLD_KEY = "mine-ting-household-v1";
 
@@ -385,8 +386,8 @@ export default function Page(){
     if(!token||!householdId){setAccountOpen(true);notify("Logg inn for å dele Mine Ting.");return}
     try{
       const data=await jsonFetch(`${API_URL}/invite`,{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({householdId})});
-      const shareText=`Bli med i Mine Ting. Invitasjonskode: ${data.code}`;
-      if(navigator.share)await navigator.share({title:"Mine Ting",text:shareText});else{await navigator.clipboard.writeText(data.code);notify(`Invitasjonskode ${data.code} er kopiert`)}
+      const shareText=`Bli med i Mine Ting.\n${APP_URL}\nInvitasjonskode: ${data.code}`;
+      if(navigator.share)await navigator.share({title:"Mine Ting",text:`Invitasjonskode: ${data.code}`,url:APP_URL});else{await navigator.clipboard.writeText(shareText);notify(`Invitasjonskode ${data.code} og riktig adresse er kopiert`)}
     }catch(error:any){
       notify(error.message||"Kunne ikke lage invitasjon.");
       if(error.code==="PRO_REQUIRED")setAccountOpen(true);
