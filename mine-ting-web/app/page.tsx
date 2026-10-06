@@ -227,7 +227,7 @@ export default function Page(){
           try{
             const saved=await jsonFetch(`${API_URL}/snapshot`,{
               method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${sessionToken}`},
-              body:JSON.stringify({householdId:chosen,data:merged,baseVersion:version})
+              body:JSON.stringify({householdId:chosen,data:merged,baseVersion:version,source:"web-bootstrap"})
             });
             version=Number(saved.version||version+1);
           }catch(error:any){
@@ -305,7 +305,7 @@ export default function Page(){
       try{
         const saved=await jsonFetch(`${API_URL}/snapshot`,{
           method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
-          body:JSON.stringify({householdId,data:localData,baseVersion:snapshotVersion})
+          body:JSON.stringify({householdId,data:localData,baseVersion:snapshotVersion,source:"web-ui"})
         });
         setSnapshotVersion(Number(saved.version||snapshotVersion+1));
         setLastCloudSync(new Date().toISOString());
@@ -317,7 +317,7 @@ export default function Page(){
             const merged=mergeSnapshotData(localData,latest.data||{});
             const saved=await jsonFetch(`${API_URL}/snapshot`,{
               method:"PUT",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},
-              body:JSON.stringify({householdId,data:merged,baseVersion:Number(latest.version||1)})
+              body:JSON.stringify({householdId,data:merged,baseVersion:Number(latest.version||1),source:"web-ui"})
             });
             hydrating.current=true;
             setItems(merged.items);setLocations(merged.locations.length?merged.locations:defaultLocations);
