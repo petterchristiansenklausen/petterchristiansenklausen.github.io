@@ -39,8 +39,10 @@ const rateStore = globalRateStore.__minMatChefRate ?? new Map<string, RateEntry>
 globalRateStore.__minMatChefRate = rateStore;
 
 function rateLimitKey(request: NextRequest) {
+  const installation = request.headers.get("x-minmat-installation")?.trim();
+  if (installation && /^[a-f0-9-]{20,80}$/i.test(installation)) return "install:" + installation.toLowerCase();
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || request.headers.get("x-real-ip") || "unknown";
+  return "ip:" + (forwarded || request.headers.get("x-real-ip") || "unknown");
 }
 
 function consumeRateLimit(request: NextRequest) {
