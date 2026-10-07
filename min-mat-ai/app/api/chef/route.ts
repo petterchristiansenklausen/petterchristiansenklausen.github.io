@@ -117,7 +117,8 @@ function normalizeIngredient(raw: unknown, inventoryIds: Set<string>, allowImage
   if (!name) return null;
   const inventoryItemID = cleanString(item.inventoryItemID, 80);
   const modelSaysAvailable = item.fromInventory === true;
-  const fromInventory = modelSaysAvailable && (inventoryItemID === "" || inventoryIds.has(inventoryItemID));
+  const fromInventory = modelSaysAvailable &&
+    (inventoryIds.has(inventoryItemID) || (allowImageInventory && inventoryItemID === ""));
   return {
     name,
     amount: normalizeAmount(item.amount, 1),
