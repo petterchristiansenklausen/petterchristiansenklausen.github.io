@@ -8,6 +8,26 @@ export const maxDuration = 30;
 const categories = ["Meieri", "Kjøtt", "Fisk", "Grønnsaker", "Frukt", "Bakervarer", "Tørrvare", "Drikke", "Pålegg", "Snacks", "Annet"];
 const units = ["stk", "skive", "mg", "g", "hg", "kg", "ml", "dl", "l"];
 
+type RateEntry = { count: number; resetAt: number };
+const globalPhotoRate = globalThis as typeof globalThis & { __minMatPhotoRate?: Map<string, RateEntry> };
+const photoRate = globalPhotoRate.__minMatPhotoRate ?? new Map<string, RateEntry>();
+globalPhotoRate.__minMatPhotoRate = photoRate;
+
+function consumePhotoRate(request: NextRequest) {
+  const key = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    request.headers.get("x-real-ip") || "unknown";
+  const now = Date.now();
+  const current = photoRate.get(key);
+  if (!current || current.resetAt <= now) {
+    photoRate.set(key, { count: 1, resetAt: now + 60 * 60 * 1000 });
+    return true;
+  }
+  if (current.count >= 30) return false;
+  current.count += 1;
+  photoRate.set(key, current);
+  return true;
+}
+
 function clean(value: unknown, max = 160) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
 }
@@ -26,6 +46,10 @@ export async function POST(request: NextRequest) {
     const expected = process.env.MIN_MAT_CLIENT_TOKEN;
     if (!expected || request.headers.get("x-minmat-client") !== expected) {
       return NextResponse.json({ error: "Ugyldig klient." }, { status: 401 });
+    }
+
+    if (!consumePhotoRate(request)) {
+      return NextResponse.json({ error: "For mange bildeanalyser akkurat nå. Prøv igjen litt senere." }, { status: 429 });
     }
 
     const length = Number(request.headers.get("content-length") || "0");
