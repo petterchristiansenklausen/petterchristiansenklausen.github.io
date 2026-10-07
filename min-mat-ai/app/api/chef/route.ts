@@ -22,6 +22,7 @@ type ChefRequest = {
   allowMissing?: boolean;
   message?: string;
   imageDataURL?: string;
+  recentMeals?: string[];
   preferences?: {
     allergies?: string;
     diet?: string;
@@ -31,6 +32,30 @@ type ChefRequest = {
 };
 
 const allowedUnits = ["stk", "skive", "mg", "g", "hg", "kg", "ml", "dl", "l", "ts", "ss"];
+
+type RateEntry = { count: number; resetAt: number };
+const globalRateStore = globalThis as typeof globalThis & { __minMatChefRate?: Map<string, RateEntry> };
+const rateStore = globalRateStore.__minMatChefRate ?? new Map<string, RateEntry>();
+globalRateStore.__minMatChefRate = rateStore;
+
+function rateLimitKey(request: NextRequest) {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || request.headers.get("x-real-ip") || "unknown";
+}
+
+function consumeRateLimit(request: NextRequest) {
+  const key = rateLimitKey(request);
+  const now = Date.now();
+  const current = rateStore.get(key);
+  if (!current || current.resetAt <= now) {
+    rateStore.set(key, { count: 1, resetAt: now + 60 * 60 * 1000 });
+    return true;
+  }
+  if (current.count >= 60) return false;
+  current.count += 1;
+  rateStore.set(key, current);
+  return true;
+}
 
 function clampInt(value: unknown, min: number, max: number, fallback: number) {
   const n = Number(value);
@@ -155,6 +180,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Ugyldig klient." }, { status: 401 });
     }
 
+    if (!consumeRateLimit(request)) {
+      return NextResponse.json({ error: "For mange AI-Kokk-forespørsler akkurat nå. Prøv igjen litt senere." }, { status: 429 });
+    }
+
     const contentLength = Number(request.headers.get("content-length") || "0");
     if (contentLength > 1500000) {
       return NextResponse.json({ error: "Forespørselen er for stor." }, { status: 413 });
@@ -177,6 +206,9 @@ export async function POST(request: NextRequest) {
     const allergies = cleanString(raw.preferences?.allergies, 500);
     const diet = cleanString(raw.preferences?.diet, 300);
     const dislikes = cleanString(raw.preferences?.dislikes, 300);
+    const recentMeals = Array.isArray(raw.recentMeals)
+      ? raw.recentMeals.map((x) => cleanString(x, 140)).filter(Boolean).slice(0, 8)
+      : [];
 
     if (inventory.length === 0 && !message && !imageDataURL) {
       return NextResponse.json(
@@ -204,6 +236,7 @@ export async function POST(request: NextRequest) {
       "Du skal aldri late som om en vare finnes dersom den ikke finnes i inventory. Respekter også oppgitt mengde så langt det er praktisk mulig. Hvis allowMissing er false skal du bruke bare inventory og missingIngredients skal være tom. Hvis allowMissing er true kan nødvendige manglende varer føres under missingIngredients.",
       "Hvis et bilde er vedlagt, kan tydelig synlige matvarer regnes som tilgjengelige og markeres fromInventory=true med inventoryItemID=null. Ikke gjett på uklare eller skjulte varer.",
       "Ved oppgitte allergier skal du unngå ingredienser som åpenbart bryter med dem, men aldri garantere at en rett er allergenfri. Hold rådene matfaglige og ikke medisinske.",
+      "Hvis recentMeals er oppgitt, varier forslagene og unngå å gjenta disse rettene unødvendig. Gjenta bare når brukeren ber om det eller det er klart mest hensiktsmessig.",
       "Tillatte unit-verdier er kun: " + allowedUnits.join(", ") + ".",
       "Returner KUN gyldig JSON, uten markdown eller forklarende tekst utenfor JSON.",
       "",
@@ -242,6 +275,7 @@ export async function POST(request: NextRequest) {
       allowMissing,
       preferences: { allergies, diet, dislikes },
       message,
+      recentMeals,
       inventory,
       imageAttached: Boolean(imageDataURL)
     };
