@@ -9,7 +9,9 @@ type Item = {
   serial:string; notes:string; image?:string; images?:string[]; quantity?:number; createdAt:string; updatedAt?:string;
   status?:ItemStatus; loanedTo?:string; saleTitle?:string; saleDescription?:string;
   saleCategory?:string; salePrice?:number;
+  ownerID?:string; ownerName?:string; historyJSON?:string;
 };
+type OwnerOption = { id:string; name:string };
 type Location = { id:string; name:string; detail:string; icon:string; kind?:string; note?:string; image?:string; parentId?:string; createdAt?:string; updatedAt?:string };
 type Deletion = { id:string; deletedAt:string };
 type MutationKind = "upsertItem"|"deleteItem"|"upsertLocation"|"deleteLocation";
@@ -95,7 +97,8 @@ function normalizeItems(value:unknown):Item[]{
     images:Array.isArray(raw.images)?raw.images.filter((value:any)=>typeof value==="string"):(typeof raw.image==="string"?[raw.image]:[]),quantity:Math.max(1,Number(raw.quantity||1)),
     createdAt:String(raw.createdAt||new Date().toISOString()),updatedAt:typeof raw.updatedAt==="string"?raw.updatedAt:undefined,status:(raw.status||"I bruk") as ItemStatus,
     loanedTo:String(raw.loanedTo||""),saleTitle:String(raw.saleTitle||""),saleDescription:String(raw.saleDescription||""),
-    saleCategory:String(raw.saleCategory||""),salePrice:Number(raw.salePrice||0)
+    saleCategory:String(raw.saleCategory||""),salePrice:Number(raw.salePrice||0),
+    ownerID:String(raw.ownerID||""),ownerName:String(raw.ownerName||""),historyJSON:String(raw.historyJSON||"")
   }));
 }
 
@@ -394,6 +397,14 @@ export default function Page(){
   const totalValue=placeItems.reduce((sum,item)=>sum+Math.max(item.value||0,item.salePrice||0),0);
   const forSaleCount=placeItems.filter(item=>(item.status||"I bruk")==="Til salgs").length;
   const loanedCount=placeItems.filter(item=>(item.status||"I bruk")==="Utlånt"||item.loanedTo).length;
+  const ownerOptions=useMemo<OwnerOption[]>(()=>{
+    const map=new Map<string,string>();
+    for(const item of items){
+      const id=String(item.ownerID||"").trim(),name=String(item.ownerName||"").trim();
+      if(id&&name)map.set(id,name);
+    }
+    return [...map.entries()].map(([id,name])=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name,"nb"));
+  },[items]);
   const isPro=account?.plan?.plan==="pro";
 
   function openAdd(mode:AddMode){
@@ -508,7 +519,7 @@ export default function Page(){
       {view!=="home"&&<header className="navBar"><div className="navBarSide">{view==="places"?<button className="iconButton textButton" onClick={()=>setView("more")}>‹ Mer</button>:null}</div><h1>{topTitle}</h1><div className="navBarSide right">{view==="items"&&<button className="iconButton" onClick={()=>openAdd("manual")}>＋</button>}</div></header>}
       <section className="screen">
         {view==="home"&&selectedPlace&&<HomeView locations={locations} selectedPlace={selectedPlace} setSelectedPlaceID={setSelectedPlaceID} placeItems={placeItems} totalValue={totalValue} forSaleCount={forSaleCount} loanedCount={loanedCount} cardOrder={cardOrder} hiddenCards={hiddenCards} isCustomizing={isCustomizing} setIsCustomizing={setIsCustomizing} draggedCard={draggedCard} setDraggedCard={setDraggedCard} moveDragged={moveDragged} toggleCard={id=>setHiddenCards(current=>{const next=new Set(current);if(next.has(id))next.delete(id);else next.add(id);return next})} activateCard={activateCard} setView={setView} openPlace={openPlace} recent={placeItems.slice().sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,5)} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)}/>}
-        {view==="items"&&<ItemsView items={filteredItems} place={selectedPlace} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openAdd={()=>openAdd("manual")} edit={id=>setEditItemID(id)} remove={id=>{if(confirm("Slette denne gjenstanden?"))markItemDeleted(id)}} sell={id=>{setSaleItemID(id);setView("sell")}}/>}
+        {view==="items"&&<ItemsView items={filteredItems} place={selectedPlace} ownerOptions={ownerOptions} query={query} setQuery={setQuery} statusFilter={statusFilter} setStatusFilter={setStatusFilter} openAdd={()=>openAdd("manual")} edit={id=>setEditItemID(id)} remove={id=>{if(confirm("Slette denne gjenstanden?"))markItemDeleted(id)}} sell={id=>{setSaleItemID(id);setView("sell")}}/>}
         {view==="sell"&&<SellView items={placeItems} selectedID={saleItemID} setSelectedID={setSaleItemID} updateItem={updated=>{queueMutation(newMutation("upsertItem",updated.id,{item:updated}));setItems(current=>current.map(item=>item.id===updated.id?updated:item))}} notify={notify} openAdd={()=>openAdd("manual")}/>}
         {view==="more"&&selectedPlace&&<MoreView place={selectedPlace} items={placeItems} totalValue={totalValue} loanedCount={loanedCount} setView={setView} exportData={exportData} importBackup={()=>importRef.current?.click()} notify={notify} account={account} cloudState={cloudState} openAccount={()=>setAccountOpen(true)} createInvite={createInvite} upgrade={upgrade}/>}
         {view==="places"&&<PlacesView locations={locations} items={items} selectedPlaceID={selectedPlaceID} setSelectedPlaceID={setSelectedPlaceID} remove={id=>{if(confirm("Slette stedet og eventuelle understeder? Tingene beholdes, men mister plasseringen sin."))markPlaceDeleted(id)}} openAdd={openPlace}/>}
@@ -516,8 +527,8 @@ export default function Page(){
       <TabBar view={view} setView={setView} quick={()=>openAdd("manual")}/>
     </div>
 
-    {addOpen&&<AddItemSheet mode={addMode} locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setAddOpen(false)} notify={notify} save={item=>{queueMutation(newMutation("upsertItem",item.id,{item}));setItems(current=>[item,...current]);setAddOpen(false);notify("Gjenstanden er lagret")}}/>}
-    {editItemID&&(()=>{const item=items.find(i=>i.id===editItemID);return item?<EditItemSheet item={item} locations={locations} token={token} close={()=>setEditItemID("")} save={updated=>{queueMutation(newMutation("upsertItem",updated.id,{item:updated}));setItems(current=>current.map(i=>i.id===updated.id?updated:i));setEditItemID("");notify("Endringene er lagret")}}/>:null})()}
+    {addOpen&&<AddItemSheet mode={addMode} locations={locations} ownerOptions={ownerOptions} preferredPlaceID={selectedPlaceID} token={token} close={()=>setAddOpen(false)} notify={notify} save={item=>{queueMutation(newMutation("upsertItem",item.id,{item}));setItems(current=>[item,...current]);setAddOpen(false);notify("Gjenstanden er lagret")}}/>}
+    {editItemID&&(()=>{const item=items.find(i=>i.id===editItemID);return item?<EditItemSheet item={item} locations={locations} ownerOptions={ownerOptions} token={token} close={()=>setEditItemID("")} save={updated=>{queueMutation(newMutation("upsertItem",updated.id,{item:updated}));setItems(current=>current.map(i=>i.id===updated.id?updated:i));setEditItemID("");notify("Endringene er lagret")}}/>:null})()}
     {bulkOpen&&<BulkScanSheet locations={locations} preferredPlaceID={selectedPlaceID} token={token} close={()=>setBulkOpen(false)} notify={notify} saveMany={newItems=>{
       const slots=!account||isPro?newItems.length:Math.max(0,25-items.length);
       const accepted=newItems.slice(0,slots);
@@ -586,11 +597,11 @@ function cardBadge(id:CardID,items:Item[],forSale:number,loaned:number){if(id===
 function StatCard({label,value,symbol}:{label:string;value:string;symbol:string}){return <div className="statCard glassCard"><span>{symbol}</span><b>{value}</b><small>{label}</small></div>}
 function Thumbnail({item,size=54}:{item:Item;size?:number}){const src=item.image||item.images?.[0];return <span className="thumb" style={{width:size,height:size}}>{src?<img src={src} alt=""/>:<span>▣</span>}</span>}
 
-function ItemsView({items,place,query,setQuery,statusFilter,setStatusFilter,openAdd,edit,remove,sell}:{items:Item[];place?:Location;query:string;setQuery:(v:string)=>void;statusFilter:string;setStatusFilter:(v:string)=>void;openAdd:()=>void;edit:(id:string)=>void;remove:(id:string)=>void;sell:(id:string)=>void}){
-  return <div className="iosPage listPage"><div className="searchBar"><span>⌕</span><input id="item-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Navn, merke, modell, serienummer …"/></div><div className="filterRow"><span>{place?.name||"Alle steder"}</span><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>Alle</option><option>I bruk</option><option>Lagret</option><option>Til salgs</option><option>Utlånt</option></select></div>{items.length===0?<EmptyState title="Ingen ting registrert" text="Bruk + for å legge til den første gjenstanden." action="Legg til ting" onClick={openAdd}/>:<div className="iosList">{items.map(item=><div className="iosRow itemRow" key={item.id}><button className="itemEditTarget" onClick={()=>edit(item.id)} aria-label={`Rediger ${item.name}`}><Thumbnail item={item}/><div className="itemText"><b>{item.name}</b><span>{item.brand||item.category}{(item.quantity||1)>1?` · ${item.quantity} stk.`:""}</span><small>⌖ {item.detail||place?.name||"Uten plassering"}</small></div></button><div className="rowRight">{item.value>0&&<small>{money.format(item.value)}</small>}<div className="rowActions"><button title="Rediger" aria-label="Rediger" onClick={()=>edit(item.id)}>✎</button><button title="Selg" aria-label="Selg" onClick={()=>sell(item.id)}>◇</button><button title="Slett" aria-label="Slett" onClick={()=>remove(item.id)}>×</button></div></div></div>)}</div>}</div>
+function ItemsView({items,place,ownerOptions,query,setQuery,statusFilter,setStatusFilter,openAdd,edit,remove,sell}:{items:Item[];place?:Location;ownerOptions:OwnerOption[];query:string;setQuery:(v:string)=>void;statusFilter:string;setStatusFilter:(v:string)=>void;openAdd:()=>void;edit:(id:string)=>void;remove:(id:string)=>void;sell:(id:string)=>void}){
+  return <div className="iosPage listPage"><div className="searchBar"><span>⌕</span><input id="item-search" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Navn, merke, modell, serienummer …"/></div><div className="filterRow"><span>{place?.name||"Alle steder"}</span><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option>Alle</option><option>I bruk</option><option>Lagret</option><option>Til salgs</option><option>Utlånt</option></select></div>{items.length===0?<EmptyState title="Ingen ting registrert" text="Bruk + for å legge til den første gjenstanden." action="Legg til ting" onClick={openAdd}/>:<div className="iosList">{items.map(item=><div className="iosRow itemRow" key={item.id}><button className="itemEditTarget" onClick={()=>edit(item.id)} aria-label={`Rediger ${item.name}`}><Thumbnail item={item}/><div className="itemText"><b>{item.name}</b><span>{item.brand||item.category}{(item.quantity||1)>1?` · ${item.quantity} stk.`:""}</span><small>⌖ {item.detail||place?.name||"Uten plassering"} · ♙ {item.ownerName||"Felles"}</small></div></button><div className="rowRight">{item.value>0&&<small>{money.format(item.value)}</small>}<div className="rowActions"><button title="Rediger" aria-label="Rediger" onClick={()=>edit(item.id)}>✎</button><button title="Selg" aria-label="Selg" onClick={()=>sell(item.id)}>◇</button><button title="Slett" aria-label="Slett" onClick={()=>remove(item.id)}>×</button></div></div></div>)}</div>}</div>
 }
 
-function EditItemSheet({item,locations,token,close,save}:{item:Item;locations:Location[];token:string;close:()=>void;save:(item:Item)=>void}){
+function EditItemSheet({item,locations,ownerOptions,token,close,save}:{item:Item;locations:Location[];ownerOptions:OwnerOption[];token:string;close:()=>void;save:(item:Item)=>void}){
   const [form,setForm]=useState({
     name:item.name||"",category:item.category||"Annet",brand:item.brand||"",model:item.model||"",
     locationId:item.locationId||locations[0]?.id||"",detail:item.detail||"",condition:item.condition||"Brukt",
@@ -599,6 +610,9 @@ function EditItemSheet({item,locations,token,close,save}:{item:Item;locations:Lo
   });
   const initialImages=(item.images?.length?item.images:(item.image?[item.image]:[]))||[];
   const [images,setImages]=useState<string[]>(initialImages.slice(0,6));
+  const initialOwnerChoice=item.ownerID||((item.ownerName||"").trim()?"__new__":"");
+  const [ownerChoice,setOwnerChoice]=useState(initialOwnerChoice);
+  const [newOwnerName,setNewOwnerName]=useState(item.ownerName||"");
   const [busy,setBusy]=useState(false);
   const fileRef=useRef<HTMLInputElement>(null);
 
@@ -642,6 +656,9 @@ function EditItemSheet({item,locations,token,close,save}:{item:Item;locations:Lo
     setBusy(true);
     try{
       const savedImages=await storedImages();
+      const selectedOwner=ownerOptions.find(owner=>owner.id===ownerChoice);
+      const resolvedOwnerID=ownerChoice==="__new__"?(item.ownerID||uid()):(selectedOwner?.id||"");
+      const resolvedOwnerName=ownerChoice==="__new__"?newOwnerName.trim():(selectedOwner?.name||"");
       save({...item,
         name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),
         locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,
@@ -649,6 +666,7 @@ function EditItemSheet({item,locations,token,close,save}:{item:Item;locations:Lo
         status:form.status,loanedTo:form.status==="Utlånt"?form.loanedTo.trim():"",
         quantity:Math.max(1,Number(form.quantity)||1),
         image:savedImages[0],images:savedImages,
+        ownerID:resolvedOwnerName?resolvedOwnerID:"",ownerName:resolvedOwnerName,historyJSON:item.historyJSON||"",
         updatedAt:new Date().toISOString()
       });
     }catch(error:any){
@@ -676,6 +694,11 @@ function EditItemSheet({item,locations,token,close,save}:{item:Item;locations:Lo
       <Field label="Modell"><input value={form.model} onChange={e=>setForm({...form,model:e.target.value})}/></Field>
       <Field label="Serienummer"><input value={form.serial} onChange={e=>setForm({...form,serial:e.target.value})}/></Field>
       <Field label="Antall"><input inputMode="numeric" value={form.quantity} onChange={e=>setForm({...form,quantity:e.target.value.replace(/\D/g,"")})}/></Field>
+    </div>
+    <div className="groupLabel">EIER</div>
+    <div className="formGroup compactFields">
+      <Field label="Eier"><select value={ownerChoice} onChange={e=>{setOwnerChoice(e.target.value);if(e.target.value!=="__new__"){const owner=ownerOptions.find(o=>o.id===e.target.value);setNewOwnerName(owner?.name||"")}}}><option value="">Felles</option>{ownerOptions.map(owner=><option key={owner.id} value={owner.id}>{owner.name}</option>)}<option value="__new__">＋ Ny person</option></select></Field>
+      {ownerChoice==="__new__"&&<Field label="Navn"><input value={newOwnerName} onChange={e=>setNewOwnerName(e.target.value)} placeholder="F.eks. Petter"/></Field>}
     </div>
     <div className="groupLabel">PLASSERING</div>
     <div className="formGroup compactFields">
@@ -733,7 +756,7 @@ function TabBar({view,setView,quick}:{view:View;setView:(v:View)=>void;quick:()=
 function Tab({active,symbol,label,onClick}:{active:boolean;symbol:string;label:string;onClick:()=>void}){return <button className={`tab ${active?"active":""}`} onClick={onClick}><span>{symbol}</span><small>{label}</small></button>}
 function EmptyState({title,text,action,onClick}:{title:string;text:string;action:string;onClick:()=>void}){return <div className="emptyState"><span>▣</span><h2>{title}</h2><p>{text}</p><button className="primaryButton" onClick={onClick}>{action}</button></div>}
 
-function AddItemSheet({mode,locations,preferredPlaceID,token,close,save,notify}:{mode:AddMode;locations:Location[];preferredPlaceID:string;token:string;close:()=>void;save:(i:Item)=>void;notify:(s:string)=>void}){
+function AddItemSheet({mode,locations,ownerOptions,preferredPlaceID,token,close,save,notify}:{mode:AddMode;locations:Location[];ownerOptions:OwnerOption[];preferredPlaceID:string;token:string;close:()=>void;save:(i:Item)=>void;notify:(s:string)=>void}){
   const [activeMode,setActiveMode]=useState<AddMode>(mode);
   const [images,setImages]=useState<string[]>([]);
   const [busy,setBusy]=useState(false);
@@ -741,6 +764,8 @@ function AddItemSheet({mode,locations,preferredPlaceID,token,close,save,notify}:
   const [analysisConfidence,setAnalysisConfidence]=useState<number|null>(null);
   const [saleTitle,setSaleTitle]=useState("");
   const [saleDescription,setSaleDescription]=useState("");
+  const [ownerChoice,setOwnerChoice]=useState("");
+  const [newOwnerName,setNewOwnerName]=useState("");
   const [form,setForm]=useState({name:"",category:"Annet",brand:"",model:"",locationId:preferredPlaceID||locations[0]?.id||"",detail:"",condition:"Pent brukt",value:"",paid:"",serial:"",notes:"",status:"I bruk" as ItemStatus,loanedTo:""});
   const fileRef=useRef<HTMLInputElement>(null);
 
@@ -791,7 +816,7 @@ function AddItemSheet({mode,locations,preferredPlaceID,token,close,save,notify}:
     if(!form.name.trim())return alert("Skriv inn hva gjenstanden er.");
     setBusy(true);
     const storedImages=await uploadAll();
-    {const now=new Date().toISOString();save({id:uid(),name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,value:Number(form.value)||0,paid:Number(form.paid)||0,serial:form.serial.trim(),notes:form.notes.trim(),image:storedImages[0],images:storedImages,quantity:1,createdAt:now,updatedAt:now,status:form.status,loanedTo:form.loanedTo.trim(),saleTitle,saleDescription,saleCategory:form.category});}
+    {const now=new Date().toISOString();const selectedOwner=ownerOptions.find(owner=>owner.id===ownerChoice);const resolvedOwnerName=ownerChoice==="__new__"?newOwnerName.trim():(selectedOwner?.name||"");const resolvedOwnerID=resolvedOwnerName?(ownerChoice==="__new__"?uid():(selectedOwner?.id||"")):"";save({id:uid(),name:form.name.trim(),category:form.category,brand:form.brand.trim(),model:form.model.trim(),locationId:form.locationId,detail:form.detail.trim(),condition:form.condition,value:Number(form.value)||0,paid:Number(form.paid)||0,serial:form.serial.trim(),notes:form.notes.trim(),image:storedImages[0],images:storedImages,quantity:1,createdAt:now,updatedAt:now,status:form.status,loanedTo:form.loanedTo.trim(),saleTitle,saleDescription,saleCategory:form.category,ownerID:resolvedOwnerID,ownerName:resolvedOwnerName,historyJSON:""});}
   }
 
   return <div className="sheetBackdrop" onMouseDown={e=>{if(e.currentTarget===e.target)close()}}><div className="sheet">
@@ -808,6 +833,7 @@ function AddItemSheet({mode,locations,preferredPlaceID,token,close,save,notify}:
     {analysisMessage&&<div className="aiResult"><span>✦</span><div><b>{analysisMessage}</b>{analysisConfidence!==null&&<small>Sikkerhet: {Math.round(analysisConfidence*100)} %. Kontroller alltid forslagene før lagring.</small>}</div></div>}
 
     <div className="groupLabel">GRUNNLEGGENDE</div><div className="formGroup compactFields"><Field label="Navn *"><input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="F.eks. optisk mus"/></Field><Field label="Kategori"><select value={form.category} onChange={e=>setForm({...form,category:e.target.value})}>{categories.map(c=><option key={c}>{c}</option>)}</select></Field><Field label="Merke"><input value={form.brand} onChange={e=>setForm({...form,brand:e.target.value})}/></Field><Field label="Modell"><input value={form.model} onChange={e=>setForm({...form,model:e.target.value})}/></Field><Field label="Serienummer"><input value={form.serial} onChange={e=>setForm({...form,serial:e.target.value})}/></Field></div>
+    <div className="groupLabel">EIER</div><div className="formGroup compactFields"><Field label="Eier"><select value={ownerChoice} onChange={e=>{setOwnerChoice(e.target.value);if(e.target.value!=="__new__"){const owner=ownerOptions.find(o=>o.id===e.target.value);setNewOwnerName(owner?.name||"")}}}><option value="">Felles</option>{ownerOptions.map(owner=><option key={owner.id} value={owner.id}>{owner.name}</option>)}<option value="__new__">＋ Ny person</option></select></Field>{ownerChoice==="__new__"&&<Field label="Navn"><input value={newOwnerName} onChange={e=>setNewOwnerName(e.target.value)} placeholder="F.eks. Petter"/></Field>}</div>
     <div className="groupLabel">PLASSERING</div><div className="formGroup compactFields"><Field label="Sted"><select value={form.locationId} onChange={e=>setForm({...form,locationId:e.target.value})}>{locations.map(place=><option key={place.id} value={place.id}>{place.name}</option>)}</select></Field><Field label="Hvor nøyaktig?"><input value={form.detail} onChange={e=>setForm({...form,detail:e.target.value})} placeholder="Hylle 2, blå kasse"/></Field></div>
     <div className="groupLabel">VERDI OG STATUS</div><div className="formGroup compactFields"><Field label="Tilstand"><select value={form.condition} onChange={e=>setForm({...form,condition:e.target.value})}>{["Som ny","Pent brukt","Brukt","Godt brukt"].map(v=><option key={v}>{v}</option>)}</select></Field><Field label="Status"><select value={form.status} onChange={e=>setForm({...form,status:e.target.value as ItemStatus})}>{["I bruk","Lagret","Til salgs","Utlånt"].map(v=><option key={v}>{v}</option>)}</select></Field><Field label="Kjøpspris"><input inputMode="numeric" value={form.paid} onChange={e=>setForm({...form,paid:e.target.value.replace(/\D/g,"")})}/></Field><Field label="Anslått verdi"><input inputMode="numeric" value={form.value} onChange={e=>setForm({...form,value:e.target.value.replace(/\D/g,"")})}/></Field>{form.status==="Utlånt"&&<Field label="Lånt ut til"><input value={form.loanedTo} onChange={e=>setForm({...form,loanedTo:e.target.value})}/></Field>}</div>
     <div className="groupLabel">NOTATER</div><div className="formGroup compactFields"><Field label="Beskrivelse og notater"><textarea rows={5} value={form.notes} onChange={e=>setForm({...form,notes:e.target.value})}/></Field></div>
@@ -863,7 +889,7 @@ function BulkScanSheet({locations,preferredPlaceID,token,close,saveMany,notify}:
     const created=selected.map(item=>({
       id:uid(),name:item.name.trim(),category:item.category,brand:item.brand.trim(),model:item.model.trim(),locationId,
       detail:[detail.trim(),item.locationHint.trim()].filter(Boolean).join(" · "),condition:"Brukt",value:0,paid:0,serial:"",
-      notes:item.notes.trim(),image:storedImages[0],images:storedImages,quantity:item.quantity,createdAt:now,updatedAt:now,status:"Lagret" as ItemStatus,loanedTo:""
+      notes:item.notes.trim(),image:storedImages[0],images:storedImages,quantity:item.quantity,createdAt:now,updatedAt:now,status:"Lagret" as ItemStatus,loanedTo:"",ownerID:"",ownerName:"",historyJSON:""
     }));
     saveMany(created);
   }
