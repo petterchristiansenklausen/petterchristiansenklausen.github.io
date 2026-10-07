@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-const categories = ["Meieri", "Kjøtt", "Fisk", "Grønnsaker", "Frukt", "Bakervarer", "Tørrvare", "Drikke", "Pålegg", "Snacks", "Annet"];
+const categories = ["Frukt", "Grønnsaker", "Kjøtt", "Fisk", "Meieri", "Tørrvare", "Drikke", "Brød", "Pålegg", "Snacks", "Krydder", "Annet"];
 const units = ["stk", "skive", "mg", "g", "hg", "kg", "ml", "dl", "l"];
 
 type RateEntry = { count: number; resetAt: number };
