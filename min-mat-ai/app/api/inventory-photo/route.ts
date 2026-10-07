@@ -14,8 +14,11 @@ const photoRate = globalPhotoRate.__minMatPhotoRate ?? new Map<string, RateEntry
 globalPhotoRate.__minMatPhotoRate = photoRate;
 
 function consumePhotoRate(request: NextRequest) {
-  const key = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") || "unknown";
+  const installation = request.headers.get("x-minmat-installation")?.trim();
+  const key = installation && /^[a-f0-9-]{20,80}$/i.test(installation)
+    ? "install:" + installation.toLowerCase()
+    : "ip:" + (request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+        request.headers.get("x-real-ip") || "unknown");
   const now = Date.now();
   const current = photoRate.get(key);
   if (!current || current.resetAt <= now) {
