@@ -15,7 +15,8 @@ type InventoryItem = {
 };
 
 type ChefRequest = {
-  action?: "ideas" | "use_soon" | "dinner" | "weekly_plan" | "freeform";
+  action?: "ideas" | "use_soon" | "dinner" | "weekly_plan" | "daily_plan" | "single_meal" | "freeform";
+  mealSlot?: string;
   language?: string;
   servings?: number;
   maxMinutes?: number;
@@ -194,12 +195,14 @@ export async function POST(request: NextRequest) {
 
     const raw = await request.json() as ChefRequest;
     const inventory = sanitizeInventory(raw.inventory);
-    const validActions = ["ideas", "use_soon", "dinner", "weekly_plan", "freeform"];
+    const validActions = ["ideas", "use_soon", "dinner", "weekly_plan", "daily_plan", "single_meal", "freeform"];
     const action = validActions.includes(raw.action || "") ? String(raw.action) : "ideas";
     const servings = clampInt(raw.servings, 1, 12, 2);
     const maxMinutes = clampInt(raw.maxMinutes, 10, 180, 35);
     const allowMissing = raw.allowMissing !== false;
     const language = cleanString(raw.language, 16) || "nb";
+    const validSlots = ["frokost", "lunsj", "mellommåltid", "middag", "kveld"];
+    const mealSlot = validSlots.includes(raw.mealSlot || "") ? raw.mealSlot : "middag";
     const message = cleanString(raw.message, 1000);
     const imageDataURL = typeof raw.imageDataURL === "string" &&
       raw.imageDataURL.startsWith("data:image/jpeg;base64,") &&
@@ -230,6 +233,8 @@ export async function POST(request: NextRequest) {
       use_soon: "Prioriter mat med nær utløpsdato. Lag 3 forslag som reduserer matsvinn.",
       dinner: "Lag 3 middagsforslag som passer tidsgrensen.",
       weekly_plan: "Lag en variert 7-dagers middagsplan. Returner 7 forslag og fyll mealPlan med dayOffset 0-6.",
+      daily_plan: "Lag en komplett, variert dagsmeny for én dag med FEM forslag i denne rekkefølgen: frokost, lunsj, mellommåltid, middag, kveldsmat. Fyll mealPlan med fem oppføringer, alle dayOffset 0, og slot nøyaktig: frokost, lunsj, mellommåltid, middag, kveld. Sjekk at ingrediensene samlet sett står i rimelig forhold til matlageret.",
+      single_meal: "Lag NØYAKTIG ÉTT komplett og realistisk måltid til måltidstypen " + mealSlot + ". Returner én suggestion og mealPlan: [].",
       freeform: "Svar på brukerens konkrete ønske, men knytt svaret til matlageret når det er relevant."
     };
 
@@ -267,13 +272,14 @@ export async function POST(request: NextRequest) {
       "    { \"dayOffset\": 0, \"slot\": \"middag\", \"suggestionIndex\": 0 }",
       "  ]",
       "}",
-      "For andre handlinger enn weekly_plan skal mealPlan normalt være [].",
+      "For andre handlinger enn weekly_plan og daily_plan skal mealPlan normalt være [].",
       "Ikke returner mer enn 7 suggestions, 16 ingredienser per rett eller 10 steg per rett."
     ].join("\n");
 
     const userPayload = {
       instruction: actionInstruction[action],
       servings,
+      mealSlot,
       maxMinutes,
       allowMissing,
       preferences: { allergies, diet, dislikes },
@@ -303,7 +309,7 @@ export async function POST(request: NextRequest) {
           { role: "user", content: userContent }
         ],
         response_format: { type: "json_object" },
-        max_completion_tokens: action === "weekly_plan" ? 4000 : 2200
+        max_completion_tokens: action === "weekly_plan" ? 4000 : action === "daily_plan" ? 3600 : 2200
       }),
       signal: AbortSignal.timeout(28000)
     });
@@ -358,7 +364,7 @@ export async function POST(request: NextRequest) {
         missingIngredients: []
       }));
     }
-    const mealPlan = Array.isArray(parsed?.mealPlan)
+    let mealPlan = Array.isArray(parsed?.mealPlan)
       ? parsed.mealPlan.flatMap((raw: unknown) => {
           if (!raw || typeof raw !== "object") return [];
           const entry = raw as Record<string, unknown>;
@@ -368,6 +374,14 @@ export async function POST(request: NextRequest) {
           return suggestions.length > 0 ? [{ dayOffset, slot, suggestionIndex }] : [];
         }).slice(0, 7)
       : [];
+    if (action === "daily_plan" && suggestions.length > 0) {
+      const slots = ["frokost", "lunsj", "mellommåltid", "middag", "kveld"];
+      // Map deterministically when the model omits or scrambles mealPlan indexes.
+      mealPlan = slots.slice(0, suggestions.length).map((slot, suggestionIndex) => ({
+        dayOffset: 0, slot, suggestionIndex
+      }));
+    }
+    if (action === "single_meal") suggestions = suggestions.slice(0, 1);
 
     if (suggestions.length === 0) {
       return NextResponse.json({ error: "AI-Kokk fant ingen brukbare forslag. Prøv igjen." }, { status: 502 });
