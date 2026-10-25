@@ -1,5 +1,6 @@
 import { getVercelOidcToken } from "@vercel/oidc";
 import { NextRequest, NextResponse } from "next/server";
+import { reserveTextAIQuota } from "../../../lib/text-ai-quota";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,28 +20,6 @@ function failure(error: string, status: number) {
 
 function clean(value: unknown, limit: number) {
   return typeof value === "string" ? value.trim().slice(0, limit) : "";
-}
-
-// Same conservative, in-instance hourly abuse protection as /api/chef.
-// This is not an absolute financial budget; paid usage remains governed by Vercel AI Gateway.
-const counters = globalThis as typeof globalThis & {
-  __minMatMethodRates?: Map<string, { count: number; until: number }>
-};
-const counts = counters.__minMatMethodRates ?? new Map<string, { count: number; until: number }>();
-counters.__minMatMethodRates = counts;
-function isAllowed(request: NextRequest) {
-  const supplied = request.headers.get("x-minmat-installation") || "";
-  const ip = (request.headers.get("x-forwarded-for") || "unknown").split(",")[0].slice(0, 80);
-  const key = /^[a-f0-9-]{20,80}$/i.test(supplied) ? supplied : ip;
-  const existing = counts.get(key);
-  const now = Date.now();
-  if (!existing || now > existing.until) {
-    counts.set(key, { count: 1, until: now + 3600000 });
-    return true;
-  }
-  if (existing.count >= 30) return false;
-  existing.count++;
-  return true;
 }
 
 export async function POST(request: NextRequest) {
@@ -75,7 +54,14 @@ export async function POST(request: NextRequest) {
     }))
     .filter((x) => x.name);
   if (!ingredients.length) return failure("Ingen lesbare ingredienser i oppskriften.", 400);
-  if (!isAllowed(request)) return failure("For mange forespørsler. Prøv igjen senere.", 429);
+  let quotaAllowed: boolean;
+  try {
+    quotaAllowed = await reserveTextAIQuota(request, "recipe-method");
+  } catch (error) {
+    console.error("Recipe-method quota unavailable", error instanceof Error ? error.message : "unknown");
+    return failure("AI-tjenesten er midlertidig utilgjengelig.", 503);
+  }
+  if (!quotaAllowed) return failure("Grensen for AI-bruk er nådd. Prøv igjen senere.", 429);
 
   let token: string | undefined;
   try {
