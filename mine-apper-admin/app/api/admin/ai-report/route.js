@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 const noStore = { "Cache-Control": "private, no-store, max-age=0", "X-Robots-Tag": "noindex" };
 
-export async function GET() {
+export async function GET(request) {
   if (!authConfigured()) {
     return Response.json({ error: "Administrasjon ikke konfigurert" }, { status: 503, headers: noStore });
   }
@@ -14,7 +14,7 @@ export async function GET() {
   if (!isAdminSession(session)) {
     return Response.json({ error: "Ikke autorisert" }, { status: 403, headers: noStore });
   }
-  const credits = await readGatewayCredits();
+  const credits = await readGatewayCredits(request);
   return Response.json({
     schemaVersion: 1,
     kind: "mine-apper-admin-ai-snapshot",
