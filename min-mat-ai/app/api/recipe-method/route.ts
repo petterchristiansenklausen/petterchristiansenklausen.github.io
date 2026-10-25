@@ -1,4 +1,5 @@
 import { getVercelOidcToken } from "@vercel/oidc";
+import { captureAIMetrics } from "../../../lib/ai-usage-telemetry";
 import { NextRequest, NextResponse } from "next/server";
 import { reserveTextAIQuota } from "../../../lib/text-ai-quota";
 
@@ -116,6 +117,7 @@ export async function POST(request: NextRequest) {
       });
     } finally { clearTimeout(timer); }
     const reply = await response.json().catch(() => ({})) as any;
+    captureAIMetrics("recipe-method", response, reply, token);
     if (!response.ok) {
       console.error("Recipe method AI gateway status", response.status);
       return failure("AI-tjenesten kunne ikke lage fremgangsmåten akkurat nå.", 502);
