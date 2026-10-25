@@ -1,5 +1,6 @@
 import { getVercelOidcToken } from "@vercel/oidc";
 import { NextRequest, NextResponse } from "next/server";
+import { reserveTextAIQuota } from "../../../lib/text-ai-quota";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,29 +8,6 @@ export const maxDuration = 30;
 
 const categories = ["Frukt", "Grønnsaker", "Kjøtt", "Fisk", "Meieri", "Tørrvare", "Drikke", "Brød", "Pålegg", "Snacks", "Krydder", "Annet"];
 const units = ["stk", "skive", "mg", "g", "hg", "kg", "ml", "dl", "l"];
-
-type RateEntry = { count: number; resetAt: number };
-const globalPhotoRate = globalThis as typeof globalThis & { __minMatPhotoRate?: Map<string, RateEntry> };
-const photoRate = globalPhotoRate.__minMatPhotoRate ?? new Map<string, RateEntry>();
-globalPhotoRate.__minMatPhotoRate = photoRate;
-
-function consumePhotoRate(request: NextRequest) {
-  const installation = request.headers.get("x-minmat-installation")?.trim();
-  const key = installation && /^[a-f0-9-]{20,80}$/i.test(installation)
-    ? "install:" + installation.toLowerCase()
-    : "ip:" + (request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-        request.headers.get("x-real-ip") || "unknown");
-  const now = Date.now();
-  const current = photoRate.get(key);
-  if (!current || current.resetAt <= now) {
-    photoRate.set(key, { count: 1, resetAt: now + 60 * 60 * 1000 });
-    return true;
-  }
-  if (current.count >= 30) return false;
-  current.count += 1;
-  photoRate.set(key, current);
-  return true;
-}
 
 function clean(value: unknown, max = 160) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -51,9 +29,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Ugyldig klient." }, { status: 401 });
     }
 
-    if (!consumePhotoRate(request)) {
-      return NextResponse.json({ error: "For mange bildeanalyser akkurat nå. Prøv igjen litt senere." }, { status: 429 });
-    }
 
     const length = Number(request.headers.get("content-length") || "0");
     if (length > 1500000) return NextResponse.json({ error: "Bildet er for stort." }, { status: 413 });
@@ -63,6 +38,17 @@ export async function POST(request: NextRequest) {
       body.imageDataURL.startsWith("data:image/jpeg;base64,") &&
       body.imageDataURL.length <= 1200000 ? body.imageDataURL : "";
     if (!image) return NextResponse.json({ error: "Mangler gyldig bilde." }, { status: 400 });
+
+    let quotaAllowed: boolean;
+    try {
+      quotaAllowed = await reserveTextAIQuota(request, "inventory-photo");
+    } catch (error) {
+      console.error("Inventory-photo quota unavailable", error instanceof Error ? error.message : "unknown");
+      return NextResponse.json({ error: "AI-tjenesten er midlertidig utilgjengelig." }, { status: 503 });
+    }
+    if (!quotaAllowed) {
+      return NextResponse.json({ error: "Grensen for AI-bruk er nådd. Prøv igjen senere." }, { status: 429 });
+    }
 
     const existingNames = Array.isArray(body.existingNames)
       ? body.existingNames.map((x) => clean(x, 120)).filter(Boolean).slice(0, 100)
