@@ -161,3 +161,4 @@ export default function AIUsagePanel() {
     </>}
     <p className="report-help">Du kan sende dataene direkte til meg ved å kopiere rapporten eller legge ved JSON-filen i ChatGPT. For eldre forespørsler kan du eksportere CSV/JSON fra <a href="https://vercel.com/uap-watch/min-mat-ai/ai-gateway/logs" target="_blank" rel="noopener noreferrer">Vercel AI Gateway Logs</a>. Fjern eventuelt sensitivt innhold før deling.</p>
   </section>;
+}
