@@ -1,5 +1,6 @@
 import { auth, authConfigured, isAdminSession, signOut } from "../auth";
 import { redirect } from "next/navigation";
+import AIUsagePanel from "./components/ai-usage-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +9,7 @@ const appNames = [
   "Mine Ting", "Mine Biler", "Mine Eiendommer", "Mine Fargeark", "Min Kriseplan"
 ];
 const modules = [
-  ["AI & Kostnader","Kostnader, AI Gateway, modeller og kvoter","Ikke tilkoblet"],
+  ["AI & Kostnader","Direkte kredittstatus fra AI Gateway, med tydelig merket teamomfang","Lesestatus"],
   ["AI-kreditter","Kjøp, saldo og transaksjoner","Deaktivert"],
   ["Økonomi","App Store Connect, Pro-salg og rapporter","Ikke tilkoblet"],
   ["Drift & Sikkerhet","Hendelser, tilgang og revisjonslogg","Under oppsett"],
@@ -33,13 +34,14 @@ export default async function Dashboard() {
       <section className="notice" id="sikkerhet"><strong>Administratortilgang aktiv</strong><p>Innloggingen er kontrollert mot en eksplisitt GitHub-ID. Endringer, betalinger og integrasjoner er fortsatt sperret til tjenestene er klart konfigurert.</p></section>
       <section className="metrics" aria-label="Oversikt">
         <div className="metric"><small>Apper i registeret</small><strong>9</strong><span>Prosjektoversikt</span></div>
-        <div className="metric"><small>Datakilder</small><strong>0</strong><span>Ingen integrasjoner tilkoblet</span></div>
-        <div className="metric"><small>AI-forbruk</small><strong>—</strong><span>Ikke tilkoblet</span></div>
+        <div className="metric"><small>AI-kreditter</small><strong>Se under</strong><span>Direktetilkobling testes</span></div>
+        <div className="metric"><small>Min Mat AI-kostnader</small><strong>—</strong><span>Per app ikke tilkoblet</span></div>
         <div className="metric"><small>Endringsfunksjoner</small><strong>Av</strong><span>Skrivebeskyttet</span></div>
       </section>
+      <AIUsagePanel />
       <section id="apper"><div className="sectionheading"><h2>Mine apper</h2><small>9 registrerte</small></div><div className="appgrid">{appNames.map((name) => <div className="appcard" key={name}><span className="diamond">◆</span><strong>{name}</strong><small>Ikke tilkoblet</small></div>)}</div></section>
       <section id="moduler"><div className="sectionheading"><h2>Administrasjon</h2><small>Forberedte moduler</small></div><div className="modulegrid">{modules.map(([title,body,state])=><article className="module" key={title}><h3>{title}</h3><p>{body}</p><span className="tag">{state}</span></article>)}</div></section>
-      <footer>Mine Apper Admin · Ingen produksjonsdata er koblet til</footer>
+      <footer>Mine Apper Admin · Kun autorisert lesetilgang til AI Gateway-kreditter der tilgjengelig</footer>
     </main>
   </div>;
 }
