@@ -1,5 +1,6 @@
 import { getVercelOidcToken } from "@vercel/oidc";
 import { NextRequest, NextResponse } from "next/server";
+import { reserveTextAIQuota } from "../../../lib/text-ai-quota";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,32 +34,6 @@ type ChefRequest = {
 };
 
 const allowedUnits = ["stk", "skive", "mg", "g", "hg", "kg", "ml", "dl", "l", "ts", "ss"];
-
-type RateEntry = { count: number; resetAt: number };
-const globalRateStore = globalThis as typeof globalThis & { __minMatChefRate?: Map<string, RateEntry> };
-const rateStore = globalRateStore.__minMatChefRate ?? new Map<string, RateEntry>();
-globalRateStore.__minMatChefRate = rateStore;
-
-function rateLimitKey(request: NextRequest) {
-  const installation = request.headers.get("x-minmat-installation")?.trim();
-  if (installation && /^[a-f0-9-]{20,80}$/i.test(installation)) return "install:" + installation.toLowerCase();
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return "ip:" + (forwarded || request.headers.get("x-real-ip") || "unknown");
-}
-
-function consumeRateLimit(request: NextRequest) {
-  const key = rateLimitKey(request);
-  const now = Date.now();
-  const current = rateStore.get(key);
-  if (!current || current.resetAt <= now) {
-    rateStore.set(key, { count: 1, resetAt: now + 60 * 60 * 1000 });
-    return true;
-  }
-  if (current.count >= 60) return false;
-  current.count += 1;
-  rateStore.set(key, current);
-  return true;
-}
 
 function clampInt(value: unknown, min: number, max: number, fallback: number) {
   const n = Number(value);
@@ -184,9 +159,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Ugyldig klient." }, { status: 401 });
     }
 
-    if (!consumeRateLimit(request)) {
-      return NextResponse.json({ error: "For mange AI-Kokk-forespørsler akkurat nå. Prøv igjen litt senere." }, { status: 429 });
-    }
 
     const contentLength = Number(request.headers.get("content-length") || "0");
     if (contentLength > 1500000) {
@@ -221,6 +193,19 @@ export async function POST(request: NextRequest) {
         { error: "Legg inn mat i matlageret eller skriv hva du ønsker hjelp med." },
         { status: 400 }
       );
+    }
+
+    // Reserve a shared quota slot only after validating the request.
+    // If the budget database is unavailable, do not start a billable AI call.
+    let quotaAllowed: boolean;
+    try {
+      quotaAllowed = await reserveTextAIQuota(request, "chef");
+    } catch (error) {
+      console.error("AI-Kokk quota unavailable", error instanceof Error ? error.message : "unknown");
+      return NextResponse.json({ error: "AI-tjenesten er midlertidig utilgjengelig." }, { status: 503 });
+    }
+    if (!quotaAllowed) {
+      return NextResponse.json({ error: "Grensen for AI-bruk er nådd. Prøv igjen senere." }, { status: 429 });
     }
 
     const token = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || await getVercelOidcToken();
