@@ -1,4 +1,5 @@
 import { getVercelOidcToken } from "@vercel/oidc";
+import { captureAIMetrics } from "../../../lib/ai-usage-telemetry";
 import { NextRequest, NextResponse } from "next/server";
 import { reserveTextAIQuota } from "../../../lib/text-ai-quota";
 
@@ -89,6 +90,7 @@ export async function POST(request: NextRequest) {
     });
 
     const gatewayBody = await gateway.json().catch(() => null) as any;
+    captureAIMetrics("inventory-photo", gateway, gatewayBody, token);
     if (!gateway.ok) {
       console.error("inventory photo gateway error", gateway.status, gatewayBody?.error?.message);
       return NextResponse.json({ error: "Kunne ikke analysere bildet akkurat nå." }, { status: 502 });
