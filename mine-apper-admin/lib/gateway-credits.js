@@ -1,15 +1,27 @@
-// Read-only AI Gateway Credits lookup. Uses Vercel deployment OIDC, not a browser key.
+// Read-only AI Gateway credit lookup. Never return the OIDC token to clients.
 const endpoint = "https://ai-gateway.vercel.sh/v1/credits";
 
-function nonnegativeNumber(value) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+// AI Gateway can return decimal-string amounts. Preserve real zeroes; reject unexpected input.
+function validCredits(value) {
+  if (typeof value === "number") return Number.isFinite(value) && value >= 0 ? value : null;
+  if (typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+  return null;
 }
 
-export async function readGatewayCredits() {
-  const oidc = process.env.VERCEL_OIDC_TOKEN;
+export async function readGatewayCredits(request) {
+  // Vercel OIDC at runtime arrives through a *request header*, not process.env.
+  // The environment variable is only a fallback for build or local development.
+  // On Vercel, x-vercel-oidc-token is injected into the function's Request.
+  const oidc = request?.headers?.get("x-vercel-oidc-token") ||
+    process.env.VERCEL_OIDC_TOKEN;
+
   if (!oidc) return {
-    status: "unavailable", reason: "oidc_unavailable",
-    note: "Vercel OIDC er ikke tilgjengelig i dette kjøremiljøet."
+    status: "unavailable",
+    reason: "oidc_unavailable",
+    note: "Vercel OIDC mangler i forespørselen. Kontroller Secure Backend Access/OIDC i prosjektet."
   };
 
   try {
@@ -19,31 +31,28 @@ export async function readGatewayCredits() {
       cache: "no-store",
       signal: AbortSignal.timeout(8000)
     });
-    if (!response.ok) {
-      return {
-        status: "unavailable",
-        reason: "gateway_http_error",
-        httpStatus: response.status,
-        note: "AI Gateway kunne ikke returnere kredittsaldo nå."
-      };
-    }
+    if (!response.ok) return {
+      status: "unavailable",
+      reason: "gateway_http_error",
+      httpStatus: response.status,
+      note: "AI Gateway kunne ikke returnere kredittsaldo nå."
+    };
 
     const payload = await response.json();
     const data = payload?.data && typeof payload.data === "object" ? payload.data : payload;
-    const balance = nonnegativeNumber(data?.balance);
-    const totalUsed = nonnegativeNumber(data?.total_used);
-    if (balance === null || totalUsed === null) {
-      return {
-        status: "unavailable", reason: "unsupported_gateway_response",
-        note: "Gateway svarte, men saldoformatet var ikke som forventet."
-      };
-    }
+    const balance = validCredits(data?.balance);
+    const totalUsed = validCredits(data?.total_used);
+    if (balance === null || totalUsed === null) return {
+      status: "unavailable", reason: "unsupported_gateway_response",
+      note: "AI Gateway svarte, men saldoformatet var ikke som forventet."
+    };
+
     return {
       status: "available",
       scope: "vercel_team",
       balance,
       totalUsed,
-      unit: "AI Gateway credits",
+      unit: "USD credits",
       source: "Vercel AI Gateway /v1/credits"
     };
   } catch {
