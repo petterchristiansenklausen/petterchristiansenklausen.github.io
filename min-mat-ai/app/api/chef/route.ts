@@ -316,7 +316,7 @@ export async function POST(request: NextRequest) {
     });
 
     const gatewayBody = await gatewayResponse.json().catch(() => null) as any;
-    recordAiUsageLater("chef", gatewayResponse.status, gatewayBody, "openai/gpt-5.6-luna");
+    recordAiUsageLater("chef", gatewayResponse.status, gatewayBody, "openai/gpt-5.6-luna", token);
     if (!gatewayResponse.ok) {
       const detail = gatewayBody?.error?.message || gatewayBody?.message || "AI Gateway error";
       console.error("AI Gateway error", gatewayResponse.status, detail);
