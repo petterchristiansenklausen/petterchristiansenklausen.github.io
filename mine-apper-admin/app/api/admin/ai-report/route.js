@@ -1,5 +1,6 @@
 import { auth, authConfigured, isAdminSession } from "../../../../auth";
 import { readGatewayCredits } from "../../../../lib/gateway-credits";
+import { readMinMatUsage } from "../../../../lib/min-mat-usage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,18 +15,13 @@ export async function GET(request) {
   if (!isAdminSession(session)) {
     return Response.json({ error: "Ikke autorisert" }, { status: 403, headers: noStore });
   }
-  const credits = await readGatewayCredits(request);
+  const [credits, minMat] = await Promise.all([readGatewayCredits(request), readMinMatUsage()]);
   return Response.json({
     schemaVersion: 1,
     kind: "mine-apper-admin-ai-snapshot",
     generatedAt: new Date().toISOString(),
     team: { slug: "uap-watch", displayName: "Mine Apper" },
-    minMat: {
-      projectName: "min-mat-ai",
-      vercelProjectId: "prj_HEbnn1VXCkLh1gT1A668QU4Y1UvB",
-      requests: { status: "not_connected" },
-      actualCost: { status: "not_connected" }
-    },
+    minMat,
     aiGateway: {
       credits,
       scopeDescription: "Gjelder Vercel-teamet Mine Apper samlet, ikke bare Min Mat.",
