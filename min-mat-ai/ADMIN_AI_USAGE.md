@@ -71,3 +71,34 @@ Ingen nye abonnementer, løpende kjøp eller tillatelsesendringer gjøres her.
 **Obs:** Ingen automatisk krysskobling av databasepassord ble gjort.
 En sikkerhetskontroll sperret overføring av slike opplysninger mellom
 de to tjenestene. Ingen hemmeligheter ble eksponert.
+
+## Videreført i oktober 2026
+
+- Min Mat-koden kan nå slå opp registrert **faktisk USD-kostnad** med
+  `GET /v1/generation?id=gen_...` når Gateway svarer med en gyldig
+  genererings-ID. Kallene skjer kun server-side etter at AI-svaret er laget.
+  Hvis ID eller kostnad mangler, står kostnaden som ukjent (`NULL`).
+- Opprettet aggregert skrivebeskyttet dagsvisning
+  `public.min_mat_ai_daily` i rapportdatabasen.
+  Den viser dag, funksjon, modell, forespørsler, feil, ukjent kostnad,
+  sum kjent kostnad, tokens og siste registrering.
+- Leserrollen kan **kun lese**, skriverrollen kan **kun legge til målinger**.
+  Begge er uten innlogging, rolleadministrasjon, database-/skjemaoppretting
+  og uten Neon-superbrukermedlemskap.
+- Oppsettsfilen for dagsvisningen er `sql/002_daily_admin_report.sql`.
+- Den siste Vercel Preview-bygningen skal være `READY` før sammenslåing.
+- Min Mat i produksjon og den eksisterende Admin-siden er ikke endret.
+- Databasekoblingen og innlogging for begrensede roller gjenstår:
+  sensitivt passordmateriale skal settes direkte i Neon/Vercel,
+  ikke transporteres mellom verktøy gjennom chat.
+
+### Sikkerhetskontroll
+
+Bruk dette som mål for rolleprivilegier (alle ikke-listede adminprivilegier `false`):
+
+| Rolle | SELECT råtabell | INSERT råtabell | SELECT dagsvisning |
+| --- | --- | --- | --- |
+| mine_ai_reader_restricted | ja | nei | ja |
+| mine_ai_writer_restricted | nei | ja | nei |
+
+Når direkte pålogging konfigureres, behold de samme rettighetene.
