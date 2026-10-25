@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { neon } from "@neondatabase/serverless";
 import { getVercelOidcToken } from "@vercel/oidc";
+import { captureAIMetrics } from "../../../lib/ai-usage-telemetry";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -120,9 +121,14 @@ export async function POST(request: NextRequest) {
       });
     } finally { clearTimeout(timer); }
 
-    if (response.status === 402) return fail("AI-bildebudsjettet er brukt opp.", 429);
+    if (response.status === 402) {
+      captureAIMetrics("recipe-image", response, null, auth);
+      return fail("AI-bildebudsjettet er brukt opp.", 429);
+    }
+    if (!response.ok) captureAIMetrics("recipe-image", response, null, auth);
     if (!response.ok) return fail("Bildet kunne ikke lages akkurat nå. Prøv igjen senere.", 502);
     const result = (await response.json()) as { data?: { b64_json?: string }[] };
+    captureAIMetrics("recipe-image", response, { id: (result as any).id, model: (result as any).model, usage: (result as any).usage }, auth);
     const imageBase64 = result.data?.[0]?.b64_json;
     if (typeof imageBase64 !== "string" ||
         imageBase64.length < 100 || imageBase64.length > 6500000) {
