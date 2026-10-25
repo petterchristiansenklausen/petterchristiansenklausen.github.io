@@ -26,7 +26,7 @@ export default async function Dashboard() {
   return <div className="shell">
     <aside className="sidebar">
       <div className="identity"><div className="logo">M</div><div><strong>Mine Apper</strong><small>ADMIN · PRIVAT</small></div></div>
-      <nav aria-label="Hovedmeny"><a href="#oversikt">Oversikt</a><a href="#apper">Mine apper</a><a href="#moduler">AI & Kostnader</a><a href="#moduler">AI-kreditter</a><a href="#moduler">Økonomi</a><a href="#sikkerhet">Drift & Sikkerhet</a></nav>
+      <nav aria-label="Hovedmeny"><a href="#oversikt">Oversikt</a><a href="#apper">Mine apper</a><a href="#ai-kostnader">AI & Kostnader</a><a href="#moduler">AI-kreditter</a><a href="#moduler">Økonomi</a><a href="#sikkerhet">Drift & Sikkerhet</a></nav>
       <form action={logout}><button className="secondary" type="submit">Logg ut</button></form>
       <div className="footnote">Beskyttet med Vercel og GitHub OAuth</div>
     </aside>
