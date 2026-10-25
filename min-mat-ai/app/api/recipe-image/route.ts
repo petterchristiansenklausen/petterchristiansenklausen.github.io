@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
       return fail("Bildet kunne ikke lages akkurat nå. Prøv igjen senere.", 502);
     }
     const result = (await response.json()) as { data?: { b64_json?: string }[]; usage?: { cost?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
-    recordAiUsageLater("recipe-image", response.status, result, "openai/gpt-image-2");
+    recordAiUsageLater("recipe-image", response.status, result, "openai/gpt-image-2", auth);
     const imageBase64 = result.data?.[0]?.b64_json;
     if (typeof imageBase64 !== "string" ||
         imageBase64.length < 100 || imageBase64.length > 6500000) {
