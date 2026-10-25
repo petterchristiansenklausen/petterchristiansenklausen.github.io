@@ -1,4 +1,5 @@
 import { getVercelOidcToken } from "@vercel/oidc";
+import { recordAiUsageLater } from "../../../lib/ai-usage";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -315,6 +316,7 @@ export async function POST(request: NextRequest) {
     });
 
     const gatewayBody = await gatewayResponse.json().catch(() => null) as any;
+    recordAiUsageLater("chef", gatewayResponse.status, gatewayBody, "openai/gpt-5.6-luna");
     if (!gatewayResponse.ok) {
       const detail = gatewayBody?.error?.message || gatewayBody?.message || "AI Gateway error";
       console.error("AI Gateway error", gatewayResponse.status, detail);
