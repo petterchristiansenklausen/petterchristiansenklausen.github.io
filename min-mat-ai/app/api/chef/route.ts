@@ -1,4 +1,5 @@
 import { getVercelOidcToken } from "@vercel/oidc";
+import { captureAIMetrics } from "../../../lib/ai-usage-telemetry";
 import { NextRequest, NextResponse } from "next/server";
 import { reserveTextAIQuota } from "../../../lib/text-ai-quota";
 
@@ -300,6 +301,7 @@ export async function POST(request: NextRequest) {
     });
 
     const gatewayBody = await gatewayResponse.json().catch(() => null) as any;
+    captureAIMetrics("chef", gatewayResponse, gatewayBody, token);
     if (!gatewayResponse.ok) {
       const detail = gatewayBody?.error?.message || gatewayBody?.message || "AI Gateway error";
       console.error("AI Gateway error", gatewayResponse.status, detail);
