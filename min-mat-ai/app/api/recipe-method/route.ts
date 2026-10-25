@@ -131,7 +131,7 @@ export async function POST(request: NextRequest) {
       });
     } finally { clearTimeout(timer); }
     const reply = await response.json().catch(() => ({})) as any;
-    recordAiUsageLater("recipe-method", response.status, reply, "openai/gpt-5.6-luna");
+    recordAiUsageLater("recipe-method", response.status, reply, "openai/gpt-5.6-luna", token);
     if (!response.ok) {
       console.error("Recipe method AI gateway status", response.status);
       return failure("AI-tjenesten kunne ikke lage fremgangsmåten akkurat nå.", 502);
