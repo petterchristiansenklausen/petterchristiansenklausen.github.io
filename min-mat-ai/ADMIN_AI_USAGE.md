@@ -102,3 +102,4 @@ Bruk dette som mål for rolleprivilegier (alle ikke-listede adminprivilegier `fa
 | mine_ai_writer_restricted | nei | ja | nei |
 
 Når direkte pålogging konfigureres, behold de samme rettighetene.
+

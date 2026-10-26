@@ -17,3 +17,4 @@ CREATE INDEX IF NOT EXISTS min_mat_ai_usage_recorded_feature
 -- * Min Mat runtime: INSERT on this table only, USAGE on identity sequence.
 -- * Mine Apper Admin: SELECT on this table only.
 -- Never reuse an owner/superuser connection URI in a public-facing backend.
+
