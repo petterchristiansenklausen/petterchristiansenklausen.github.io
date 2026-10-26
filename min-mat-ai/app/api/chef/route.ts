@@ -158,6 +158,7 @@ function normalizeSuggestion(raw: unknown, inventoryIds: Set<string>, defaultSer
   const steps = Array.isArray(item.steps)
     ? item.steps.map((x) => cleanString(x, 500)).filter(Boolean).slice(0, 10)
     : [];
+  if (steps.length === 0) return null; // Tom fremgangsmåte er ikke en brukbar oppskrift.
   const tags = Array.isArray(item.tags)
     ? item.tags.map((x) => cleanString(x, 50)).filter(Boolean).slice(0, 8)
     : [];
@@ -274,7 +275,10 @@ export async function POST(request: NextRequest) {
       "  ]",
       "}",
       "For andre handlinger enn weekly_plan og daily_plan skal mealPlan normalt være [].",
-      "Ikke returner mer enn 7 suggestions, 16 ingredienser per rett eller 10 steg per rett."
+      "Ikke returner mer enn 7 suggestions, 16 ingredienser per rett eller 10 steg per rett.",
+      "Prioriter alltid en HELT FERDIG, kortfattet JSON-respons. Unngå lange introduksjoner og fylltekst.",
+      "Bruk vanligvis 3-6 korte steps per rett, og 2-4 korte steps ved ukeplan eller dagsplan.",
+      "Hold answer under 200 tegn og summary under 140 tegn. Behold alle nødvendige ingredienser og konkrete tilberedningstrinn."
     ].join("\n");
 
     const userPayload = {
@@ -310,7 +314,7 @@ export async function POST(request: NextRequest) {
           { role: "user", content: userContent }
         ],
         response_format: { type: "json_object" },
-        max_completion_tokens: action === "weekly_plan" ? 4000 : action === "daily_plan" ? 3600 : 2200
+        max_completion_tokens: action === "weekly_plan" ? 5000 : action === "daily_plan" ? 4400 : 3200
       }),
       signal: AbortSignal.timeout(28000)
     });
@@ -318,12 +322,28 @@ export async function POST(request: NextRequest) {
     const gatewayBody = await gatewayResponse.json().catch(() => null) as any;
     recordAiUsageLater("chef", gatewayResponse.status, gatewayBody, "openai/gpt-5.6-luna", token);
     if (!gatewayResponse.ok) {
-      const detail = gatewayBody?.error?.message || gatewayBody?.message || "AI Gateway error";
-      console.error("AI Gateway error", gatewayResponse.status, detail);
+      // Logg aldri feilmeldinger fra leverandøren: de kan inneholde brukerinnhold.
+      console.warn("min_mat_chef_gateway_failed", { status: gatewayResponse.status });
       return NextResponse.json({ error: "AI-Kokk er midlertidig utilgjengelig." }, { status: 502 });
     }
 
-    const content = gatewayBody?.choices?.[0]?.message?.content;
+    const choice = gatewayBody?.choices?.[0];
+    const finishReason = choice?.finish_reason;
+    if (finishReason === "length") {
+      // En avbrutt JSON-respons skal aldri telle som levert resultat i appens dagskvote.
+      console.warn("min_mat_chef_incomplete_output", { reason: "token_limit", action });
+      return NextResponse.json(
+        { error: "AI-Kokk rakk ikke fullføre oppskriften. Forsøket teller ikke i dagskvoten. Prøv et kortere spørsmål." },
+        { status: 502, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    if (finishReason === "content_filter" || choice?.message?.refusal) {
+      return NextResponse.json(
+        { error: "AI-Kokk kunne ikke fullføre denne forespørselen. Forsøket teller ikke i dagskvoten." },
+        { status: 502, headers: { "Cache-Control": "no-store" } }
+      );
+    }
+    const content = choice?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
       return NextResponse.json({ error: "AI-Kokk ga ikke et gyldig svar." }, { status: 502 });
     }
@@ -332,8 +352,11 @@ export async function POST(request: NextRequest) {
     try {
       parsed = JSON.parse(stripCodeFence(content));
     } catch {
-      console.error("AI JSON parse failed", content.slice(0, 1200));
-      return NextResponse.json({ error: "AI-Kokk ga et svar som ikke kunne leses." }, { status: 502 });
+      // Ikke logg rå modelltekst: den kan inneholde personopplysninger og oppskrifter.
+      console.warn("min_mat_chef_invalid_json", {
+        reason: typeof finishReason === "string" ? finishReason : "unknown", action
+      });
+      return NextResponse.json({ error: "AI-Kokk ga et ufullstendig svar. Forsøket teller ikke i dagskvoten. Prøv igjen." }, { status: 502 });
     }
 
     const inventoryIds = new Set(inventory.map((item) => item.id).filter((id): id is string => Boolean(id)));
@@ -399,7 +422,8 @@ export async function POST(request: NextRequest) {
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
-    console.error("AI Chef route failed", error);
+    // Ikke logg hele unntaket, som kan inneholde brukerinnhold eller leverandørdata.
+    console.error("min_mat_chef_route_failed", { type: error instanceof Error ? error.name : "unknown" });
     return NextResponse.json({ error: "Kunne ikke kontakte AI-Kokk akkurat nå." }, { status: 500 });
   }
 }
