@@ -35,7 +35,9 @@ export async function authenticate(req:Request):Promise<Account>{
  if(!r.rows.length)throw new BillingError(401,'sign_in_required');
  return {id:r.rows[0].id,sub:r.rows[0].apple_sub,environment:r.rows[0].environment,appTransactionId:r.rows[0].app_transaction_id};
 }
+// All verified Sandbox/TestFlight identities can grant limited TEST credits.
+// Apple ID and AppTransaction environment are checked by the login handler.
+// App Store Production sessions can never request test grants.
 export function canTopUp(a:Account){
- return a.environment==='Sandbox'&&process.env.MIN_MAT_TEST_TOPUP_ENABLED==='true'&&
- (process.env.MIN_MAT_TESTER_SUBJECTS||'').split(',').map(x=>x.trim()).includes(a.sub);
+ return a.environment==='Sandbox' && process.env.MIN_MAT_TEST_TOPUP_ENABLED==='true';
 }
