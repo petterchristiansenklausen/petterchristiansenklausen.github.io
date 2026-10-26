@@ -1,4 +1,5 @@
 import { getVercelOidcToken } from "@vercel/oidc";
+import { recordAiUsageLater } from "../../../lib/ai-usage";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
@@ -103,6 +104,7 @@ export async function POST(request: NextRequest) {
     });
 
     const gatewayBody = await gateway.json().catch(() => null) as any;
+    recordAiUsageLater("inventory-photo", gateway.status, gatewayBody, "openai/gpt-5.6-luna", token);
     if (!gateway.ok) {
       console.error("inventory photo gateway error", gateway.status, gatewayBody?.error?.message);
       return NextResponse.json({ error: "Kunne ikke analysere bildet akkurat nå." }, { status: 502 });

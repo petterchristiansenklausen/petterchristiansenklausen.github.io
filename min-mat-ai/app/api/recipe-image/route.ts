@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { recordAiUsageLater } from "../../../lib/ai-usage";
 import { neon } from "@neondatabase/serverless";
 import { getVercelOidcToken } from "@vercel/oidc";
 import { NextRequest, NextResponse } from "next/server";
@@ -120,9 +121,16 @@ export async function POST(request: NextRequest) {
       });
     } finally { clearTimeout(timer); }
 
-    if (response.status === 402) return fail("AI-bildebudsjettet er brukt opp.", 429);
-    if (!response.ok) return fail("Bildet kunne ikke lages akkurat nå. Prøv igjen senere.", 502);
-    const result = (await response.json()) as { data?: { b64_json?: string }[] };
+    if (response.status === 402) {
+      recordAiUsageLater("recipe-image", response.status, null, "openai/gpt-image-2");
+      return fail("AI-bildebudsjettet er brukt opp.", 429);
+    }
+    if (!response.ok) {
+      recordAiUsageLater("recipe-image", response.status, null, "openai/gpt-image-2");
+      return fail("Bildet kunne ikke lages akkurat nå. Prøv igjen senere.", 502);
+    }
+    const result = (await response.json()) as { data?: { b64_json?: string }[]; usage?: { cost?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
+    recordAiUsageLater("recipe-image", response.status, result, "openai/gpt-image-2", auth);
     const imageBase64 = result.data?.[0]?.b64_json;
     if (typeof imageBase64 !== "string" ||
         imageBase64.length < 100 || imageBase64.length > 6500000) {
