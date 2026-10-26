@@ -61,10 +61,16 @@ test('purchase cannot be claimed by a different customer',async()=>{
  await tx(db=>applyPurchase(db,a,t));await assert.rejects(tx(db=>applyPurchase(db,b,t)));
  assert.equal((await snapshot(b)).balance,0);
 });
-test('Sandbox balance never funds Production; direct test top-up rejects production',async()=>{
+test('Sandbox balance never funds Production; all verified Sandbox testers can top up',async()=>{
  const a=await account(100),p={...a,environment:'Production' as const};assert.equal((await snapshot(p)).balance,0);
- process.env.MIN_MAT_TEST_TOPUP_ENABLED='true';process.env.MIN_MAT_TESTER_SUBJECTS=a.sub;
- assert.equal(canTopUp(a),true);assert.equal(canTopUp(p),false);assert.equal(canTopUp({...a,sub:'attacker'}),false);
+ process.env.MIN_MAT_TEST_TOPUP_ENABLED='true';
+ assert.equal(canTopUp(a),true);
+ assert.equal(canTopUp({...a,sub:'another_testflight_tester'}),true);
+ assert.equal(canTopUp(p),false);
+ assert.equal(canTopUp({...p,sub:'another_testflight_tester'}),false);
+ process.env.MIN_MAT_TEST_TOPUP_ENABLED='false';
+ assert.equal(canTopUp(a),false);
+ process.env.MIN_MAT_TEST_TOPUP_ENABLED='true';
 });
 test('different sessions/devices resolve the same personal balance',async()=>{
  const a=await account(100);const otherDevice={...a};assert.equal((await snapshot(otherDevice)).balance,100);
