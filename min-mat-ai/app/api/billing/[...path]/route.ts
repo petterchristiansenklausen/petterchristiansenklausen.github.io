@@ -2,7 +2,7 @@ import { NextRequest,NextResponse } from 'next/server';
 import { billingEnabled,database,transaction,BillingError } from '../../../../lib/billing/db';
 import { authenticate,challenge,deviceLogin,canTopUp,digest } from '../../../../lib/billing/auth';
 import { verifier,currentPurchase,proID } from '../../../../lib/billing/apple';
-import { wallet,event,reserve,settle,commitUsableResult,applyPurchase,type Account } from '../../../../lib/billing/ledger';
+import { wallet,event,reserve,settle,settleClient,commitUsableResult,applyPurchase,type Account } from '../../../../lib/billing/ledger';
 import { usable } from '../../../../lib/billing/validation';
 import { purchaseCredits, purchaseLedgerId } from '../../../../lib/billing/pricing';
 import { POST as chef } from '../../../../lib/providers/chef/route';
@@ -90,7 +90,7 @@ async function handle(req:NextRequest){
  }
  if(path==='settle'){
   if(!uuid(b.requestID)||typeof b.accept!=='boolean')throw new BillingError(400,'invalid_settlement');
-  const state=await transaction(db=>settle(db,a,b.requestID,b.accept));return reply({state,...await status(a)});
+  const state=await transaction(db=>settleClient(db,a,b.requestID,b.accept));return reply({state,...await status(a)});
  }
  if(path.startsWith('ai/')){
   const feature=path.slice(3);const providers:Record<string,(request:NextRequest)=>Promise<Response>>={chef,'recipe-method':method,'inventory-photo':inventory,'recipe-image':image};
