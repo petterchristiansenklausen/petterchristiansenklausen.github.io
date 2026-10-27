@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
-import {wallet,event,reserve,settle,applyPurchase,type Account} from '../lib/billing/ledger';
+import {wallet,event,reserve,settle,commitUsableResult,applyPurchase,type Account} from '../lib/billing/ledger';
 import {canTopUp} from '../lib/billing/auth';
 import {usable} from '../lib/billing/validation';
 import type {DB} from '../lib/billing/db';
@@ -104,4 +104,52 @@ test('one-time Pro starter bonus does not repeat on restore, reinstall or refund
  assert.equal((await snapshot(a)).balance,100);
  await apply('restored-pro-4',true);await apply('restored-pro-5');
  assert.equal((await snapshot(a)).balance,0);
+});
+
+test('valid AI answer commits before HTTP response; client rejection cannot get free AI',async()=>{
+ const a=await account(10),id=randomUUID();
+ await tx(db=>reserve(db,a,id,'chef','prompt-hash',3));
+ const result={suggestions:[{title:'Soup',ingredients:[],steps:['Boil vegetables']}]};
+ assert.equal(usable('chef',result),true);
+ assert.equal(await tx(db=>commitUsableResult(db,a,id,result)),'committed');
+ // Malicious, offline or outdated clients can no longer turn a successful
+ // provider result into a free AI generation by sending accept:false.
+ assert.equal(await tx(db=>settle(db,a,id,false)),'committed');
+ assert.equal(await tx(db=>settle(db,a,id,true)),'committed');
+ const w=await snapshot(a);
+ assert.equal(w.balance,7);assert.equal(w.reserved,0);
+ const prior=await tx(db=>reserve(db,a,id,'chef','prompt-hash',3));
+ assert.equal(prior.fresh,false);
+ assert.equal(prior.state,'committed');
+ assert.deepEqual(prior.result,result);
+ assert.equal((await snapshot(a)).balance,7);
+ const {rows}=await pg.query("SELECT kind,delta FROM billing.ledger WHERE customer_id=$1 AND event_key=$2",[a.id,'spend:'+id]);
+ assert.equal(rows.length,1);assert.equal(rows[0].delta,-3);
+});
+test('invalid supplier result or upstream exception releases all reserved credits',async()=>{
+ const a=await account(10);
+ for(const invalid of [{suggestions:[]},null]){
+  const id=randomUUID();
+  await tx(db=>reserve(db,a,id,'chef','input-'+id,3));
+  try{
+   if(invalid===null)throw Error('upstream_timeout');
+   assert.equal(usable('chef',invalid),false);
+   throw Error('invalid_provider_response');
+  }catch{
+   assert.equal(await tx(db=>settle(db,a,id,false)),'released');
+  }
+  assert.equal((await snapshot(a)).balance,10);
+  assert.equal((await snapshot(a)).reserved,0);
+  assert.equal(await tx(db=>settle(db,a,id,true)),'released');
+ }
+ const {rows}=await pg.query("SELECT COUNT(*)::int as debits FROM billing.ledger WHERE customer_id=$1 AND delta<0",[a.id]);
+ assert.equal(rows[0].debits,0);
+});
+test('rollback or provider timeout during commit never partially charges',async()=>{
+ const a=await account(10),id=randomUUID();
+ await tx(db=>reserve(db,a,id,'chef','prompt',3));
+ await pg.query("UPDATE billing.requests SET expires_at=now()-interval '1 second' WHERE request_id=$1",[id]);
+ await assert.rejects(tx(db=>commitUsableResult(db,a,id,{suggestions:[{title:'Meal',ingredients:[],steps:['Cook']}]})));
+ const w=await snapshot(a);
+ assert.equal(w.balance,10);assert.equal(w.reserved,0);
 });
