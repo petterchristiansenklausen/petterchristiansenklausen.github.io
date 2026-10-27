@@ -166,3 +166,30 @@ test('client cannot release an in-flight or ready response',async()=>{
  assert.equal((await snapshot(a)).balance,7);
  assert.equal((await snapshot(a)).reserved,0);
 });
+
+test('reinstalled device resolves existing Sandbox wallet by signed app identity',async()=>{
+ const appleDownload='signed-apple-app-transaction-integration-fixture';
+ const register=async(environment:'Sandbox'|'Production')=>{
+  const r=await pg.query<{id:string}>(`
+   INSERT INTO billing.customers (id,apple_sub,app_environment,app_transaction_id)
+   VALUES ($1,NULL,$2,$3)
+   ON CONFLICT (app_environment,app_transaction_id)
+    WHERE app_transaction_id IS NOT NULL
+   DO UPDATE SET app_transaction_id=EXCLUDED.app_transaction_id RETURNING id
+  `,[randomUUID(),environment,appleDownload]);
+  return r.rows[0].id;
+ };
+ // Emulate two fresh device sessions. The production wallet must stay separate.
+ const original=await register('Sandbox');
+ const a:Account={id:original,sub:appleDownload,environment:'Sandbox',appTransactionId:appleDownload};
+ await tx(async db=>{await wallet(db,a);await event(db,a,'test:4',4,'test_grant');});
+ const secondInstall=await register('Sandbox');
+ assert.equal(secondInstall,original);
+ const secondSession:Account={...a,id:secondInstall};
+ assert.equal((await snapshot(secondSession)).balance,4);
+ assert.equal((await snapshot(secondSession)).reserved,0);
+ const productionCustomer=await register('Production');
+ assert.notEqual(productionCustomer,original);
+ const prod:Account={...a,id:productionCustomer,environment:'Production'};
+ assert.equal((await snapshot(prod)).balance,0);
+});
