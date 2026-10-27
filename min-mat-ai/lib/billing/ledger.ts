@@ -85,3 +85,13 @@ export async function commitUsableResult(db:DB,a:Account,id:string,result:unknow
  if(state!=='committed')throw new BillingError(500,'settlement_failed');
  return state;
 }
+
+export async function settleClient(db:DB,a:Account,id:string,accept:boolean){
+ if(accept)return settle(db,a,id,true);
+ await wallet(db,a);
+ const {rows}=await db.query('SELECT state FROM billing.requests WHERE customer_id=$1 AND environment=$2 AND request_id=$3',[a.id,a.environment,id]);
+ if(!rows.length)throw new BillingError(404,'request_missing');
+ const state=rows[0].state;
+ if(state==='released'||state==='committed')return state as 'released'|'committed';
+ throw new BillingError(409,'settlement_server_managed');
+}
