@@ -124,7 +124,7 @@ test('valid AI answer commits before HTTP response; client rejection cannot get 
  assert.deepEqual(prior.result,result);
  assert.equal((await snapshot(a)).balance,7);
  const {rows}=await pg.query("SELECT kind,delta FROM billing.ledger WHERE customer_id=$1 AND event_key=$2",[a.id,'spend:'+id]);
- assert.equal(rows.length,1);assert.equal(rows[0].delta,-3);
+ assert.equal(rows.length,1);assert.equal((rows[0] as {delta:number}).delta,-3);
 });
 test('invalid supplier result or upstream exception releases all reserved credits',async()=>{
  const a=await account(10);
@@ -143,7 +143,7 @@ test('invalid supplier result or upstream exception releases all reserved credit
   assert.equal(await tx(db=>settle(db,a,id,true)),'released');
  }
  const {rows}=await pg.query("SELECT COUNT(*)::int as debits FROM billing.ledger WHERE customer_id=$1 AND delta<0",[a.id]);
- assert.equal(rows[0].debits,0);
+ assert.equal((rows[0] as {debits:number}).debits,0);
 });
 test('rollback or provider timeout during commit never partially charges',async()=>{
  const a=await account(10),id=randomUUID();
