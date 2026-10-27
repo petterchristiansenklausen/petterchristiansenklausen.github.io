@@ -68,6 +68,13 @@ async function handle(req:NextRequest){
  const a=await authenticate(req);
  if(path==='logout') {await database().query('DELETE FROM billing.sessions WHERE token_hash=$1',[digest(req.headers.get('authorization')!.slice(7))]);return reply({ok:true});}
  if(path==='purchase'){await recordPurchase(a,await currentPurchase(b.signedTransaction,a.environment));return reply(await status(a));}
+ if(path==='claim-pro'){
+  if(typeof b.signedTransaction!=='string'||b.signedTransaction.length>40000)throw new BillingError(400,'invalid_pro_proof');
+  const pro=await currentPurchase(b.signedTransaction,a.environment);
+  if(pro.productId!==proID||pro.revocationDate)throw new BillingError(403,'pro_required');
+  await recordPurchase(a,pro);
+  return reply(await status(a));
+ }
  if(path==='test-topup'){
   if(!canTopUp(a))throw new BillingError(403,'test_access_denied');
   if(![10,50,100].includes(b.amount)||!uuid(b.requestID))throw new BillingError(400,'invalid_topup');
@@ -90,7 +97,7 @@ async function handle(req:NextRequest){
   if(!providers[feature])throw new BillingError(404,'unknown_feature');
   if(!uuid(b.requestID)||!b.input||typeof b.input!=='object')throw new BillingError(400,'invalid_request');
   // Sandbox has the documented beta Pro allowance. Production requires a live Apple entitlement.
-  if(a.environment==='Production') {
+  if(a.environment==='Production' || (typeof b.proTransaction==='string' && b.proTransaction.length>0)) {
    if(typeof b.proTransaction!=='string')throw new BillingError(403,'pro_required');
    const pro=await currentPurchase(b.proTransaction,a.environment);
    if(pro.productId!==proID||pro.type!=='Non-Consumable'||pro.revocationDate||
