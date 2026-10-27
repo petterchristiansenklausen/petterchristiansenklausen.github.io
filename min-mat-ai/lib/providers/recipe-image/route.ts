@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { recordAiUsageLater } from "../../ai-usage";
+import { estimateRecipeImageUSD } from "../../ai-image-estimate";
 import { neon } from "@neondatabase/serverless";
 import { getVercelOidcToken } from "@vercel/oidc";
 import { NextRequest, NextResponse } from "next/server";
@@ -130,12 +131,14 @@ export async function POST(request: NextRequest) {
       return fail("Bildet kunne ikke lages akkurat nå. Prøv igjen senere.", 502);
     }
     const result = (await response.json()) as { data?: { b64_json?: string }[]; usage?: { cost?: number; prompt_tokens?: number; completion_tokens?: number }; model?: string };
-    recordAiUsageLater("recipe-image", response.status, result, "openai/gpt-image-2", auth);
     const imageBase64 = result.data?.[0]?.b64_json;
     if (typeof imageBase64 !== "string" ||
         imageBase64.length < 100 || imageBase64.length > 6500000) {
       return fail("AI-tjenesten returnerte et ugyldig bilde.", 502);
     }
+    // Only a usable returned image gets a labeled cost ESTIMATE.
+    recordAiUsageLater("recipe-image", response.status, result, "openai/gpt-image-2", auth,
+      estimateRecipeImageUSD("openai/gpt-image-2", "low", "1024x1024", prompt) ?? undefined);
     return NextResponse.json({ imageBase64 }, {
       headers: { "Cache-Control": "no-store" }
     });
