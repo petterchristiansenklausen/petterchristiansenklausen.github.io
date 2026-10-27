@@ -2,7 +2,7 @@ import { NextRequest,NextResponse } from 'next/server';
 import { billingEnabled,database,transaction,BillingError } from '../../../../lib/billing/db';
 import { authenticate,challenge,deviceLogin,canTopUp,digest } from '../../../../lib/billing/auth';
 import { verifier,currentPurchase,proID } from '../../../../lib/billing/apple';
-import { wallet,event,reserve,settle,applyPurchase,type Account } from '../../../../lib/billing/ledger';
+import { wallet,event,reserve,settle,commitUsableResult,applyPurchase,type Account } from '../../../../lib/billing/ledger';
 import { usable } from '../../../../lib/billing/validation';
 import { purchaseCredits, purchaseLedgerId } from '../../../../lib/billing/pricing';
 import { POST as chef } from '../../../../lib/providers/chef/route';
@@ -120,8 +120,9 @@ async function handle(req:NextRequest){
    const response=await providers[feature](internal);
    const result=await response.json();
    if(!response.ok||!usable(feature,result))throw new BillingError(502,'ai_failed_no_charge');
-   const ready=await database().query("UPDATE billing.requests SET state='ready',result=$4 WHERE customer_id=$1 AND environment=$2 AND request_id=$3 AND state='reserved' AND expires_at>now() RETURNING request_id",[a.id,a.environment,b.requestID,JSON.stringify(result)]);
-   if(!ready.rows.length)throw new BillingError(409,'request_expired');
+   // Durable usable result + credit debit in one transaction, before returning it.
+   // Client acknowledgement remains an idempotent no-op for older TestFlight builds.
+   await transaction(db=>commitUsableResult(db,a,b.requestID,result));
    return reply({requestID:b.requestID,result});
   }catch(e){await transaction(db=>settle(db,a,b.requestID,false));throw e;}
  }
