@@ -40,6 +40,9 @@ export function verifyDeviceProof(apple:{deviceVerification:string,deviceVerific
 export async function deviceLogin(body:any){
  if(typeof body.appTransaction!=='string'||body.appTransaction.length>40000||typeof body.challengeID!=='string')throw new BillingError(400,'invalid_app_transaction');
  const apple=await appEnvironment(body.appTransaction);
+ // This branch is a Sandbox pilot. Never register Production purchases in a Preview deployment.
+ if(process.env.VERCEL_ENV==='preview' && apple.environment!=='Sandbox')
+  throw new BillingError(403,'preview_sandbox_only');
  return transaction(async db=>{
   const {rows}=await db.query('DELETE FROM billing.challenges WHERE id=$1 AND expires_at>now() RETURNING nonce',[body.challengeID]);
   if(!rows.length)throw new BillingError(401,'nonce_invalid');
