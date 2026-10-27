@@ -31,6 +31,8 @@ function optionalMoney(value: unknown): number | null {
   return Number.isFinite(n) && n >= 0 && n <= 1_000_000 ? n : null;
 }
 
+function statusIsSuccess(status: number): boolean { return status >= 200 && status < 300; }
+
 function optionalTokens(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
@@ -40,7 +42,8 @@ export function recordAiUsageLater(
   gatewayStatus: number,
   body: GatewayBody | null,
   fallbackModel: string,
-  gatewayToken?: string
+  gatewayToken?: string,
+  estimatedCostUsd?: number
 ): void {
   const uri = process.env.MIN_MAT_TELEMETRY_DATABASE_URL;
   if (!uri) return;
@@ -49,6 +52,8 @@ export function recordAiUsageLater(
   const model = typeof body?.model === "string" && body.model.length <= 128
     ? body.model : fallbackModel;
   const reportedCost = optionalMoney(body?.usage?.cost ?? body?.provider_metadata?.gateway?.cost);
+  const fallbackEstimate = feature === 'recipe-image' && statusIsSuccess(gatewayStatus)
+    ? optionalMoney(estimatedCostUsd) : null;
   const inputTokens = optionalTokens(body?.usage?.prompt_tokens);
   const outputTokens = optionalTokens(body?.usage?.completion_tokens);
   const status = Number.isInteger(gatewayStatus) && gatewayStatus >= 100 && gatewayStatus <= 599
@@ -94,6 +99,20 @@ export function recordAiUsageLater(
       }
 
       const sql = neon(uri);
+      // Actual cost remains NULL when unavailable; the estimate is a different field.
+      // During migration an older telemetry DB can still accept the original row.
+      if (fallbackEstimate !== null && cost === null) {
+        try {
+          await sql`
+            INSERT INTO public.min_mat_ai_usage
+              (feature, model, gateway_status, cost_usd, input_tokens, output_tokens, estimated_cost_usd)
+            VALUES
+              (${feature}, ${model}, ${status}, ${cost},
+               ${inputTokens ?? lookupInputTokens}, ${outputTokens ?? lookupOutputTokens}, ${fallbackEstimate})
+          `;
+          return;
+        } catch { /* Estimate column migration pending. Record measured fields below. */ }
+      }
       await sql`
         INSERT INTO public.min_mat_ai_usage
           (feature, model, gateway_status, cost_usd, input_tokens, output_tokens)
