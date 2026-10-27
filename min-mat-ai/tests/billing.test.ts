@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
-import {wallet,event,reserve,settle,commitUsableResult,applyPurchase,type Account} from '../lib/billing/ledger';
+import {wallet,event,reserve,settle,settleClient,commitUsableResult,applyPurchase,type Account} from '../lib/billing/ledger';
 import {canTopUp} from '../lib/billing/auth';
 import {usable} from '../lib/billing/validation';
 import type {DB} from '../lib/billing/db';
@@ -152,4 +152,17 @@ test('rollback or provider timeout during commit never partially charges',async(
  await assert.rejects(tx(db=>commitUsableResult(db,a,id,{suggestions:[{title:'Meal',ingredients:[],steps:['Cook']}]})));
  const w=await snapshot(a);
  assert.equal(w.balance,10);assert.equal(w.reserved,0);
+});
+
+test('client cannot release an in-flight or ready response',async()=>{
+ const a=await account(10),id=randomUUID();
+ await tx(db=>reserve(db,a,id,'chef','h',3));
+ await assert.rejects(tx(db=>settleClient(db,a,id,false)),(e:any)=>e.code==='settlement_server_managed');
+ assert.equal((await snapshot(a)).reserved,3);
+ await ready(a,id);
+ await assert.rejects(tx(db=>settleClient(db,a,id,false)),(e:any)=>e.code==='settlement_server_managed');
+ assert.equal(await tx(db=>settleClient(db,a,id,true)),'committed');
+ assert.equal(await tx(db=>settleClient(db,a,id,false)),'committed');
+ assert.equal((await snapshot(a)).balance,7);
+ assert.equal((await snapshot(a)).reserved,0);
 });
