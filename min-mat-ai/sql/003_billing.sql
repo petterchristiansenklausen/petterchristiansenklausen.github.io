@@ -39,7 +39,7 @@ CREATE TABLE billing.daily_limits (
  PRIMARY KEY(scope,day)
 );
 CREATE TABLE billing.config (key text PRIMARY KEY, value jsonb NOT NULL);
-INSERT INTO billing.config VALUES ('tariff', '{"version":1,"costs":{"chef":2,"recipe-method":1,"inventory-photo":3,"recipe-image":15},"packs":{"com.pettersapps.MinMat.credits.100":100,"com.pettersapps.MinMat.credits.300":300,"com.pettersapps.MinMat.credits.1000":1000}}');
+INSERT INTO billing.config VALUES ('tariff', '{"version":2,"proBonusCredits":100,"costs":{"chef":3,"recipe-method":1,"inventory-photo":2,"recipe-image":8},"packs":{"com.pettersapps.MinMat.credits.starter":100,"com.pettersapps.MinMat.credits.standard":300,"com.pettersapps.MinMat.credits.large":1000}}');
 REVOKE ALL ON SCHEMA billing FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA billing FROM PUBLIC;
 COMMIT;

@@ -91,3 +91,17 @@ test('refund after spending creates debt rather than minting replacement credits
  await tx(db=>applyPurchase(db,a,{...t,revoked:true}));assert.equal((await snapshot(a)).balance,-2);
  await assert.rejects(tx(db=>reserve(db,a,randomUUID(),'chef','h2',2)));
 });
+
+
+test('one-time Pro starter bonus does not repeat on restore, reinstall or refund',async()=>{
+ const {purchaseLedgerId}=await import('../lib/billing/pricing');
+ const a=await account(0);
+ const t={productId:'com.pettersapps.MinMat.pro',originalTransactionId:'original-pro-123',transactionId:'fresh-pro-1'};
+ const apply=async(txId:string,revoked=false)=>tx(db=>applyPurchase(db,a,{
+  transactionId:purchaseLedgerId({...t,transactionId:txId}),productId:t.productId,credits:100,revoked,signedDate:100
+ }));
+ await apply(t.transactionId);await apply('restored-pro-2');await apply('restored-pro-3');
+ assert.equal((await snapshot(a)).balance,100);
+ await apply('restored-pro-4',true);await apply('restored-pro-5');
+ assert.equal((await snapshot(a)).balance,0);
+});

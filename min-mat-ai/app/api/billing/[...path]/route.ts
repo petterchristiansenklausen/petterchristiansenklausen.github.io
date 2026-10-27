@@ -4,6 +4,7 @@ import { authenticate,challenge,login,canTopUp,digest } from '../../../../lib/bi
 import { verifier,currentPurchase,proID } from '../../../../lib/billing/apple';
 import { wallet,event,reserve,settle,applyPurchase,type Account } from '../../../../lib/billing/ledger';
 import { usable } from '../../../../lib/billing/validation';
+import { purchaseCredits, purchaseLedgerId } from '../../../../lib/billing/pricing';
 import { POST as chef } from '../../../../lib/providers/chef/route';
 import { POST as method } from '../../../../lib/providers/recipe-method/route';
 import { POST as inventory } from '../../../../lib/providers/inventory-photo/route';
@@ -16,11 +17,21 @@ const uuid=(s:any)=>typeof s==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 async function tariff(){return (await database().query("SELECT value FROM billing.config WHERE key='tariff'")).rows[0].value;}
 async function status(a:Account){return transaction(async db=>{const w=await wallet(db,a);return {balance:w.balance,reserved:w.reserved,available:w.balance-w.reserved,environment:a.environment,accountToken:a.id,canTopUp:canTopUp(a)};});}
 async function recordPurchase(a:Account,t:any){
- if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==a.environment||t.appAccountToken?.toLowerCase()!==a.id.toLowerCase())throw new BillingError(403,'purchase_owner_mismatch');
- const config=await tariff(); const credits=t.productId===proID?0:config.packs[t.productId];
- if(!Number.isSafeInteger(credits)||credits<0||!t.transactionId||t.quantity!==1||
- (t.productId===proID?t.type!=='Non-Consumable':t.type!=='Consumable'))throw new BillingError(400,'invalid_product');
- await transaction(db=>applyPurchase(db,a,{transactionId:t.transactionId,productId:t.productId,credits,revoked:!!t.revocationDate,signedDate:t.signedDate||0}));
+ // Older Pro purchases may lack an appAccountToken; credit purchases never do.
+ const owned = t.appAccountToken?.toLowerCase() === a.id.toLowerCase();
+ const legacyPro = t.productId === proID && !t.appAccountToken &&
+   !!a.appTransactionId && t.appTransactionId === a.appTransactionId;
+ if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==a.environment||(!owned&&!legacyPro))
+   throw new BillingError(403,'purchase_owner_mismatch');
+ const config=await tariff();
+ let credits:number;
+ try { credits=purchaseCredits(config,t.productId); }
+ catch { throw new BillingError(400,'invalid_product'); }
+ const ledgerId=purchaseLedgerId(t);
+ if(!ledgerId||t.quantity!==1||
+   (t.productId===proID?t.type!=='Non-Consumable':t.type!=='Consumable'))
+   throw new BillingError(400,'invalid_product');
+ await transaction(db=>applyPurchase(db,a,{transactionId:ledgerId,productId:t.productId,credits,revoked:!!t.revocationDate,signedDate:t.signedDate||0}));
 }
 async function notifications(body:any){
  let n:any,environment:'Sandbox'|'Production'='Production';
@@ -57,6 +68,13 @@ async function handle(req:NextRequest){
  const a=await authenticate(req);
  if(path==='logout') {await database().query('DELETE FROM billing.sessions WHERE token_hash=$1',[digest(req.headers.get('authorization')!.slice(7))]);return reply({ok:true});}
  if(path==='purchase'){await recordPurchase(a,await currentPurchase(b.signedTransaction,a.environment));return reply(await status(a));}
+ if(path==='claim-pro'){
+  if(typeof b.signedTransaction!=='string'||b.signedTransaction.length>40000)throw new BillingError(400,'invalid_pro_proof');
+  const pro=await currentPurchase(b.signedTransaction,a.environment);
+  if(pro.productId!==proID||pro.revocationDate)throw new BillingError(403,'pro_required');
+  await recordPurchase(a,pro);
+  return reply(await status(a));
+ }
  if(path==='test-topup'){
   if(!canTopUp(a))throw new BillingError(403,'test_access_denied');
   if(![10,50,100].includes(b.amount)||!uuid(b.requestID))throw new BillingError(400,'invalid_topup');
@@ -79,14 +97,15 @@ async function handle(req:NextRequest){
   if(!providers[feature])throw new BillingError(404,'unknown_feature');
   if(!uuid(b.requestID)||!b.input||typeof b.input!=='object')throw new BillingError(400,'invalid_request');
   // Sandbox has the documented beta Pro allowance. Production requires a live Apple entitlement.
-  if(a.environment==='Production') {
+  if(a.environment==='Production' || (typeof b.proTransaction==='string' && b.proTransaction.length>0)) {
    if(typeof b.proTransaction!=='string')throw new BillingError(403,'pro_required');
    const pro=await currentPurchase(b.proTransaction,a.environment);
    if(pro.productId!==proID||pro.type!=='Non-Consumable'||pro.revocationDate||
-      (pro.appAccountToken?.toLowerCase()!==a.id.toLowerCase() && pro.appTransactionId!==a.appTransactionId))
+      !(pro.appAccountToken?.toLowerCase()===a.id.toLowerCase() ||
+        (!pro.appAccountToken && pro.appTransactionId===a.appTransactionId)))
       throw new BillingError(403,'pro_required');
-   // Existing purchases without appAccountToken are accepted only for this signed app transaction.
-   await transaction(db=>applyPurchase(db,a,{transactionId:pro.transactionId!,productId:proID,credits:0,revoked:false,signedDate:pro.signedDate||0}));
+   // Stable originalTransactionId makes the Pro starter grant idempotent on restore.
+   await recordPurchase(a,pro);
   }
   const config=await tariff(),cost=config.costs[feature];
   if(b.tariffVersion!==config.version)throw new BillingError(409,'tariff_changed');
