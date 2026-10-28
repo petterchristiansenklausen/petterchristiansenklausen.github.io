@@ -166,3 +166,15 @@ test('client cannot release an in-flight or ready response',async()=>{
  assert.equal((await snapshot(a)).balance,7);
  assert.equal((await snapshot(a)).reserved,0);
 });
+
+
+test('verified REFUND_REVERSED restores only the original grant once',async()=>{
+ const a=await account(0),t={transactionId:randomUUID(),productId:'credits',credits:100,revoked:false,signedDate:100};
+ await tx(db=>applyPurchase(db,a,t));
+ await tx(db=>applyPurchase(db,a,{...t,revoked:true,signedDate:200}));
+ assert.equal((await snapshot(a)).balance,0);
+ await tx(db=>applyPurchase(db,a,{...t,refundReversed:true,signedDate:300}));
+ assert.equal((await snapshot(a)).balance,100);
+ await tx(db=>applyPurchase(db,a,{...t,refundReversed:true,signedDate:300}));
+ assert.equal((await snapshot(a)).balance,100);
+});

@@ -4,6 +4,10 @@ import {NextRequest} from 'next/server';
 import {GET,POST} from '../app/api/billing/[...path]/route';
 import {POST as legacy} from '../app/api/chef/route';
 import {appEnvironment} from '../lib/billing/apple';
+// HTTP behavior tests intentionally run in an isolated Sandbox simulation.
+// Production flags are tested separately by mode.test.ts.
+process.env.VERCEL_ENV='preview';
+process.env.MIN_MAT_BILLING_ENVIRONMENT='Sandbox';
 const req=(path:string,body?:any,headers:Record<string,string>={})=>new NextRequest('https://example.test/api/'+path,{method:body===undefined?'GET':'POST',headers,body:body===undefined?undefined:JSON.stringify(body)});
 test('billing is explicitly disabled by default',async()=>{
  delete process.env.MIN_MAT_BILLING_ENABLED;

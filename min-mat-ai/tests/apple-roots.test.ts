@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { X509Certificate } from 'node:crypto';
+import { X509Certificate,createHash } from 'node:crypto';
 import { verifier } from '../lib/billing/apple';
 
 // Public roots are DER/base64, never private keys. Production remains disabled.
@@ -18,6 +18,9 @@ test('configured Apple roots are valid trust anchors when provided',()=>{
   return cert.subject;
  });
  assert.ok(subjects.some((s:string)=>s.includes('Apple Root CA - G3')));
+ const g3=roots.map((s:string)=>new X509Certificate(Buffer.from(s,'base64'))).find((c:X509Certificate)=>c.subject.includes('Apple Root CA - G3'));
+ assert.ok(g3);
+ assert.equal(createHash('sha256').update(g3!.raw).digest('hex'),'63343abfb89a6a03ebb57e9b3f5fa7be7c4f5c756f3017b3a8c488c3653e9179');
  assert.doesNotThrow(()=>verifier('Sandbox'));
  assert.doesNotThrow(()=>verifier('Production'));
 });
