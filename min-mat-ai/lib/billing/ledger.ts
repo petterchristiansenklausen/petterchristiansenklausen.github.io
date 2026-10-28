@@ -50,20 +50,28 @@ export async function settle(db:DB,a:Account,id:string,accept:boolean){
  await db.query('UPDATE billing.requests SET state=$4,result=CASE WHEN $5 THEN result ELSE NULL END WHERE customer_id=$1 AND environment=$2 AND request_id=$3',[a.id,a.environment,id,state,accept]);
  return state;
 }
-export async function applyPurchase(db:DB,a:Account,t:{transactionId:string,productId:string,credits:number,revoked:boolean,signedDate:number}){
+export async function applyPurchase(db:DB,a:Account,t:{transactionId:string,productId:string,credits:number,revoked:boolean,signedDate:number,refundReversed?:boolean}){
  await wallet(db,a);
  const prior=await db.query('SELECT * FROM billing.purchases WHERE environment=$1 AND transaction_id=$2 FOR UPDATE',[a.environment,t.transactionId]);
  const p=prior.rows[0];
- if(p&&p.customer_id!==a.id)throw new BillingError(409,'purchase_owner_mismatch');
- if(p) {
-  // Refunds are terminal here. A stale, valid JWS cannot re-grant refunded credits.
-  if(t.revoked&&!p.revoked){
-   await db.query('UPDATE billing.purchases SET revoked=true,signed_at=GREATEST(signed_at,$3) WHERE environment=$1 AND transaction_id=$2',[a.environment,t.transactionId,t.signedDate]);
-   await event(db,a,'refund:'+t.transactionId,-p.credits,'apple_refund');
+ if(p&&(p.customer_id!==a.id||p.product_id!==t.productId||p.credits!==t.credits))
+  throw new BillingError(409,'purchase_owner_mismatch');
+ if(p){
+  if(t.refundReversed&&p.revoked&&!t.revoked){
+   const generation=Number(p.refund_generation);
+   if(generation<1)throw new BillingError(409,'refund_generation_invalid');
+   await db.query('UPDATE billing.purchases SET revoked=false,signed_at=GREATEST(signed_at,$3) WHERE environment=$1 AND transaction_id=$2',[a.environment,t.transactionId,t.signedDate]);
+   await event(db,a,`refund-reversed:${t.transactionId}:${generation}`,p.credits,'apple_refund_reversed');
+  }else if(t.revoked&&!p.revoked){
+   const generation=Number(p.refund_generation)+1;
+   await db.query('UPDATE billing.purchases SET revoked=true,refund_generation=$3,signed_at=GREATEST(signed_at,$4) WHERE environment=$1 AND transaction_id=$2',[a.environment,t.transactionId,generation,t.signedDate]);
+   await event(db,a,`refund:${t.transactionId}:${generation}`,-p.credits,'apple_refund');
   }
   return;
  }
- await db.query('INSERT INTO billing.purchases(environment,transaction_id,customer_id,product_id,credits,revoked,signed_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[a.environment,t.transactionId,a.id,t.productId,t.credits,t.revoked,t.signedDate]);
+ if(t.refundReversed)throw new BillingError(409,'purchase_not_recorded');
+ await db.query('INSERT INTO billing.purchases(environment,transaction_id,customer_id,product_id,credits,revoked,signed_at,refund_generation) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+  [a.environment,t.transactionId,a.id,t.productId,t.credits,t.revoked,t.signedDate,t.revoked?1:0]);
  if(!t.revoked)await event(db,a,'purchase:'+t.transactionId,t.credits,'apple_purchase');
 }
 

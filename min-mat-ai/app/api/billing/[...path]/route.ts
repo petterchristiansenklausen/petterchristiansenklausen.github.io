@@ -1,5 +1,5 @@
 import { NextRequest,NextResponse } from 'next/server';
-import { billingEnabled,database,transaction,BillingError } from '../../../../lib/billing/db';
+import { billingEnabled,billingMode,requireBillingEnvironment,requireProductionIsolation,database,transaction,BillingError } from '../../../../lib/billing/db';
 import { authenticate,challenge,deviceLogin,canTopUp,digest } from '../../../../lib/billing/auth';
 import { verifier,currentPurchase,proID } from '../../../../lib/billing/apple';
 import { wallet,event,reserve,settle,settleClient,commitUsableResult,applyPurchase,type Account } from '../../../../lib/billing/ledger';
@@ -16,42 +16,50 @@ const reply=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{'
 const uuid=(s:any)=>typeof s==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 async function tariff(){return (await database().query("SELECT value FROM billing.config WHERE key='tariff'")).rows[0].value;}
 async function status(a:Account){return transaction(async db=>{const w=await wallet(db,a);return {balance:w.balance,reserved:w.reserved,available:w.balance-w.reserved,environment:a.environment,accountToken:a.id,canTopUp:canTopUp(a)};});}
-async function recordPurchase(a:Account,t:any){
- // Older Pro purchases may lack an appAccountToken; credit purchases never do.
- const owned = t.appAccountToken?.toLowerCase() === a.id.toLowerCase();
- const legacyPro = t.productId === proID && !t.appAccountToken &&
-   !!a.appTransactionId && t.appTransactionId === a.appTransactionId;
- if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==a.environment||!a.appTransactionId||t.appTransactionId!==a.appTransactionId||(!owned&&!legacyPro))
-   throw new BillingError(403,'purchase_owner_mismatch');
- const config=await tariff();
- let credits:number;
- try { credits=purchaseCredits(config,t.productId); }
- catch { throw new BillingError(400,'invalid_product'); }
+async function recordPurchase(a:Account,t:any,refundReversed=false){
+ const owned=t.appAccountToken?.toLowerCase()===a.id.toLowerCase();
+ const legacyPro=t.productId===proID&&!t.appAccountToken&&!!a.appTransactionId&&t.appTransactionId===a.appTransactionId;
+ if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==a.environment||
+    !a.appTransactionId||t.appTransactionId!==a.appTransactionId||(!owned&&!legacyPro))
+  throw new BillingError(403,'purchase_owner_mismatch');
+ const config=await tariff();let credits:number;
+ try{credits=purchaseCredits(config,t.productId);}catch{throw new BillingError(400,'invalid_product');}
  const ledgerId=purchaseLedgerId(t);
- if(!ledgerId||t.quantity!==1||
-   (t.productId===proID?t.type!=='Non-Consumable':t.type!=='Consumable'))
-   throw new BillingError(400,'invalid_product');
- await transaction(db=>applyPurchase(db,a,{transactionId:ledgerId,productId:t.productId,credits,revoked:!!t.revocationDate,signedDate:t.signedDate||0}));
+ if(!ledgerId||t.quantity!==1||(t.productId===proID?t.type!=='Non-Consumable':t.type!=='Consumable'))
+  throw new BillingError(400,'invalid_product');
+ await transaction(db=>applyPurchase(db,a,{transactionId:ledgerId,productId:t.productId,
+   credits,revoked:!!t.revocationDate,signedDate:t.signedDate||0,refundReversed}));
 }
 async function notifications(body:any){
  let n:any,environment:'Sandbox'|'Production'='Production';
- for(const env of ['Production','Sandbox'] as const){try {n=await verifier(env).verifyAndDecodeNotification(body.signedPayload);environment=env;break;}catch{}}
+ for(const env of ['Production','Sandbox'] as const){
+  try{n=await verifier(env).verifyAndDecodeNotification(body.signedPayload);environment=env;break;}catch{}
+ }
  if(!n)throw new BillingError(401,'invalid_notification');
+ requireBillingEnvironment(environment);
  if(n.notificationType==='TEST')return reply({ok:true});
+ if(!['ONE_TIME_CHARGE','REFUND','REFUND_REVERSED'].includes(n.notificationType))return reply({ok:true});
  if(!n.data?.signedTransactionInfo)return reply({ok:true});
  const t=await verifier(environment).verifyAndDecodeTransaction(n.data.signedTransactionInfo);
- if(!t.appAccountToken)return reply({ok:true}); // Existing Pro purchases are restored through StoreKit.
+ if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==environment)
+  throw new BillingError(403,'notification_environment_mismatch');
+ if(!t.appAccountToken)return reply({ok:true});
  const r=await database().query('SELECT id,apple_sub,app_transaction_id FROM billing.customers WHERE id=$1',[t.appAccountToken]);
  if(!r.rows.length)throw new BillingError(503,'account_not_ready');
- // Verify latest Apple state, so notification order cannot undo a refund.
  const fresh=await currentPurchase(n.data.signedTransactionInfo,environment);
- await recordPurchase({id:r.rows[0].id,sub:r.rows[0].apple_sub||r.rows[0].app_transaction_id,environment,appTransactionId:r.rows[0].app_transaction_id},fresh);
+ await recordPurchase({id:r.rows[0].id,sub:r.rows[0].apple_sub||r.rows[0].app_transaction_id,environment,
+  appTransactionId:r.rows[0].app_transaction_id},fresh,n.notificationType==='REFUND_REVERSED');
  return reply({ok:true});
 }
 async function handle(req:NextRequest){
  const path=req.nextUrl.pathname.replace('/api/billing/','');
- if(path==='config'&&req.method==='GET')return reply(billingEnabled()?{enabled:true,...await tariff()}:{enabled:false});
+ if(path==='config'&&req.method==='GET'){
+  if(!billingEnabled())return reply({enabled:false});
+  await requireProductionIsolation();
+  return reply({enabled:true,environment:billingMode(),...await tariff()});
+ }
  if(!billingEnabled())throw new BillingError(503,'billing_unavailable');
+ await requireProductionIsolation();
  if(req.method==='GET'){
   if(path!=='status')throw new BillingError(404,'not_found');
   return reply(await status(await authenticate(req)));
