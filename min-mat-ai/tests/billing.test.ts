@@ -8,7 +8,7 @@ import {canTopUp} from '../lib/billing/auth';
 import {usable} from '../lib/billing/validation';
 import type {DB} from '../lib/billing/db';
 const pg=new PGlite();
-before(async()=>{await pg.exec(await readFile('sql/003_billing.sql','utf8'));});
+before(async()=>{await pg.exec(await readFile('sql/003_billing.sql','utf8'));await pg.exec(await readFile('sql/008_refund_reversal.sql','utf8'));});
 after(async()=>pg.close());
 const tx=<T>(fn:(db:DB)=>Promise<T>)=>pg.transaction(db=>fn(db as unknown as DB));
 async function account(credits=10):Promise<Account>{
