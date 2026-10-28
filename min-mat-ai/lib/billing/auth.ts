@@ -1,5 +1,5 @@
 import { randomUUID,randomBytes,createHash,createPublicKey,verify,timingSafeEqual } from 'node:crypto';
-import { database,transaction,BillingError } from './db';
+import { database,transaction,BillingError,requireBillingEnvironment } from './db';
 import { appEnvironment,bundleID } from './apple';
 import type { Account } from './ledger';
 export const digest=(s:string)=>createHash('sha256').update(s).digest('hex');
@@ -40,9 +40,7 @@ export function verifyDeviceProof(apple:{deviceVerification:string,deviceVerific
 export async function deviceLogin(body:any){
  if(typeof body.appTransaction!=='string'||body.appTransaction.length>40000||typeof body.challengeID!=='string')throw new BillingError(400,'invalid_app_transaction');
  const apple=await appEnvironment(body.appTransaction);
- // This branch is a Sandbox pilot. Never register Production purchases in a Preview deployment.
- if(process.env.VERCEL_ENV==='preview' && apple.environment!=='Sandbox')
-  throw new BillingError(403,'preview_sandbox_only');
+ requireBillingEnvironment(apple.environment);
  return transaction(async db=>{
   const {rows}=await db.query('DELETE FROM billing.challenges WHERE id=$1 AND expires_at>now() RETURNING nonce',[body.challengeID]);
   if(!rows.length)throw new BillingError(401,'nonce_invalid');
@@ -63,6 +61,7 @@ export async function authenticate(req:Request):Promise<Account>{
  if(!token||token.length>200)throw new BillingError(401,'sign_in_required');
  const r=await database().query('SELECT c.id,c.apple_sub,s.environment,s.app_transaction_id FROM billing.sessions s JOIN billing.customers c ON c.id=s.customer_id WHERE s.token_hash=$1 AND s.expires_at>now()',[digest(token)]);
  if(!r.rows.length)throw new BillingError(401,'sign_in_required');
+ requireBillingEnvironment(r.rows[0].environment);
  return {id:r.rows[0].id,sub:r.rows[0].apple_sub||r.rows[0].app_transaction_id,environment:r.rows[0].environment,appTransactionId:r.rows[0].app_transaction_id};
 }
 // All verified Sandbox/TestFlight identities can grant limited TEST credits.
