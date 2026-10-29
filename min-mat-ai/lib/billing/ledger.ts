@@ -40,6 +40,9 @@ export async function settle(db:DB,a:Account,id:string,accept:boolean){
  const {rows}=await db.query('SELECT * FROM billing.requests WHERE customer_id=$1 AND environment=$2 AND request_id=$3',[a.id,a.environment,id]);
  const r=rows[0]; if(!r)throw new BillingError(404,'request_missing');
  if(r.state==='released'||r.state==='committed')return r.state;
+ // A verified usable result cannot be refunded by a client-controlled "accept:false".
+ // Only a genuinely failed provider call in 'reserved' state may release credits.
+ if(!accept&&r.state==='ready')throw new BillingError(409,'result_already_available');
  if(accept&&r.state!=='ready')throw new BillingError(409,'result_not_ready');
  const state=accept?'committed':'released';
  await event(db,a,(accept?'spend:':'release:')+id,accept?-r.cost:0,state);
@@ -62,4 +65,33 @@ export async function applyPurchase(db:DB,a:Account,t:{transactionId:string,prod
  }
  await db.query('INSERT INTO billing.purchases(environment,transaction_id,customer_id,product_id,credits,revoked,signed_at) VALUES($1,$2,$3,$4,$5,$6,$7)',[a.environment,t.transactionId,a.id,t.productId,t.credits,t.revoked,t.signedDate]);
  if(!t.revoked)await event(db,a,'purchase:'+t.transactionId,t.credits,'apple_purchase');
+}
+
+/**
+ * The server, not the iPhone, is authoritative for a successful AI charge.
+ * Store the validated result and book the debit in ONE database transaction.
+ * This closes the "receive valid response then settle(false)" free-AI exploit.
+ * The response remains retrievable by the same requestID for 24 hours, in
+ * case the HTTP response is lost. Failure before committing rolls back.
+ */
+export async function commitUsableResult(db:DB,a:Account,id:string,result:unknown){
+ await wallet(db,a); // Wallet row lock serializes commits/refunds for this user.
+ const updated=await db.query(
+  "UPDATE billing.requests SET state='ready', result=$4::jsonb, expires_at=now()+interval '24 hours' WHERE customer_id=$1 AND environment=$2 AND request_id=$3 AND state='reserved' AND expires_at>now() RETURNING request_id",
+  [a.id,a.environment,id,JSON.stringify(result)]
+ );
+ if(updated.rows.length!==1)throw new BillingError(409,'request_expired');
+ const state=await settle(db,a,id,true);
+ if(state!=='committed')throw new BillingError(500,'settlement_failed');
+ return state;
+}
+
+export async function settleClient(db:DB,a:Account,id:string,accept:boolean){
+ if(accept)return settle(db,a,id,true);
+ await wallet(db,a);
+ const {rows}=await db.query('SELECT state FROM billing.requests WHERE customer_id=$1 AND environment=$2 AND request_id=$3',[a.id,a.environment,id]);
+ if(!rows.length)throw new BillingError(404,'request_missing');
+ const state=rows[0].state;
+ if(state==='released'||state==='committed')return state as 'released'|'committed';
+ throw new BillingError(409,'settlement_server_managed');
 }

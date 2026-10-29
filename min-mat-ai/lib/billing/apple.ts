@@ -8,10 +8,10 @@ export function verifier(env:'Sandbox'|'Production') {
  if(!Array.isArray(roots)||!roots.length||!Number.isSafeInteger(appId)||appId<=0)throw new BillingError(503,'apple_verification_unconfigured');
  return new SignedDataVerifier(roots.map((x:string)=>Buffer.from(x,'base64')),true,env==='Sandbox'?Environment.SANDBOX:Environment.PRODUCTION,bundleID,appId);
 }
-export async function appEnvironment(jws:string):Promise<{environment:'Sandbox'|'Production',appTransactionId:string}> {
+export async function appEnvironment(jws:string):Promise<{environment:'Sandbox'|'Production',appTransactionId:string,deviceVerification:string,deviceVerificationNonce:string}> {
  // Never trust an unverified environment header or receipt filename.
  for(const env of ['Production','Sandbox'] as const){
-  try {const t=await verifier(env).verifyAndDecodeAppTransaction(jws); if(t.receiptType===env && t.appTransactionId)return {environment:env,appTransactionId:t.appTransactionId};} catch{}
+  try {const t=await verifier(env).verifyAndDecodeAppTransaction(jws); if(t.receiptType===env && t.appTransactionId && t.deviceVerification && t.deviceVerificationNonce) return {environment:env,appTransactionId:t.appTransactionId,deviceVerification:t.deviceVerification,deviceVerificationNonce:t.deviceVerificationNonce};} catch{}
  }
  throw new BillingError(401,'invalid_app_transaction');
 }

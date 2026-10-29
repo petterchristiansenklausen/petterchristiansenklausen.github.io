@@ -1,8 +1,8 @@
 import { NextRequest,NextResponse } from 'next/server';
 import { billingEnabled,database,transaction,BillingError } from '../../../../lib/billing/db';
-import { authenticate,challenge,login,canTopUp,digest } from '../../../../lib/billing/auth';
+import { authenticate,challenge,deviceLogin,canTopUp,digest } from '../../../../lib/billing/auth';
 import { verifier,currentPurchase,proID } from '../../../../lib/billing/apple';
-import { wallet,event,reserve,settle,applyPurchase,type Account } from '../../../../lib/billing/ledger';
+import { wallet,event,reserve,settle,settleClient,commitUsableResult,applyPurchase,type Account } from '../../../../lib/billing/ledger';
 import { usable } from '../../../../lib/billing/validation';
 import { purchaseCredits, purchaseLedgerId } from '../../../../lib/billing/pricing';
 import { POST as chef } from '../../../../lib/providers/chef/route';
@@ -21,7 +21,7 @@ async function recordPurchase(a:Account,t:any){
  const owned = t.appAccountToken?.toLowerCase() === a.id.toLowerCase();
  const legacyPro = t.productId === proID && !t.appAccountToken &&
    !!a.appTransactionId && t.appTransactionId === a.appTransactionId;
- if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==a.environment||(!owned&&!legacyPro))
+ if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==a.environment||!a.appTransactionId||t.appTransactionId!==a.appTransactionId||(!owned&&!legacyPro))
    throw new BillingError(403,'purchase_owner_mismatch');
  const config=await tariff();
  let credits:number;
@@ -41,11 +41,11 @@ async function notifications(body:any){
  if(!n.data?.signedTransactionInfo)return reply({ok:true});
  const t=await verifier(environment).verifyAndDecodeTransaction(n.data.signedTransactionInfo);
  if(!t.appAccountToken)return reply({ok:true}); // Existing Pro purchases are restored through StoreKit.
- const r=await database().query('SELECT id,apple_sub FROM billing.customers WHERE id=$1',[t.appAccountToken]);
+ const r=await database().query('SELECT id,apple_sub,app_transaction_id FROM billing.customers WHERE id=$1',[t.appAccountToken]);
  if(!r.rows.length)throw new BillingError(503,'account_not_ready');
  // Verify latest Apple state, so notification order cannot undo a refund.
  const fresh=await currentPurchase(n.data.signedTransactionInfo,environment);
- await recordPurchase({id:r.rows[0].id,sub:r.rows[0].apple_sub,environment},fresh);
+ await recordPurchase({id:r.rows[0].id,sub:r.rows[0].apple_sub||r.rows[0].app_transaction_id,environment,appTransactionId:r.rows[0].app_transaction_id},fresh);
  return reply({ok:true});
 }
 async function handle(req:NextRequest){
@@ -63,7 +63,7 @@ async function handle(req:NextRequest){
  const raw=Buffer.concat(chunks).toString('utf8');
  let b:any;try{b=JSON.parse(raw||'{}');}catch{throw new BillingError(400,'invalid_json');}
  if(path==='challenge')return reply(await challenge());
- if(path==='login')return reply(await login(b));
+ if(path==='device-login')return reply(await deviceLogin(b));
  if(path==='notifications')return notifications(b);
  const a=await authenticate(req);
  if(path==='logout') {await database().query('DELETE FROM billing.sessions WHERE token_hash=$1',[digest(req.headers.get('authorization')!.slice(7))]);return reply({ok:true});}
@@ -90,7 +90,7 @@ async function handle(req:NextRequest){
  }
  if(path==='settle'){
   if(!uuid(b.requestID)||typeof b.accept!=='boolean')throw new BillingError(400,'invalid_settlement');
-  const state=await transaction(db=>settle(db,a,b.requestID,b.accept));return reply({state,...await status(a)});
+  const state=await transaction(db=>settleClient(db,a,b.requestID,b.accept));return reply({state,...await status(a)});
  }
  if(path.startsWith('ai/')){
   const feature=path.slice(3);const providers:Record<string,(request:NextRequest)=>Promise<Response>>={chef,'recipe-method':method,'inventory-photo':inventory,'recipe-image':image};
@@ -100,7 +100,7 @@ async function handle(req:NextRequest){
   if(a.environment==='Production' || (typeof b.proTransaction==='string' && b.proTransaction.length>0)) {
    if(typeof b.proTransaction!=='string')throw new BillingError(403,'pro_required');
    const pro=await currentPurchase(b.proTransaction,a.environment);
-   if(pro.productId!==proID||pro.type!=='Non-Consumable'||pro.revocationDate||
+   if(pro.productId!==proID||pro.type!=='Non-Consumable'||pro.revocationDate||!a.appTransactionId||pro.appTransactionId!==a.appTransactionId||
       !(pro.appAccountToken?.toLowerCase()===a.id.toLowerCase() ||
         (!pro.appAccountToken && pro.appTransactionId===a.appTransactionId)))
       throw new BillingError(403,'pro_required');
@@ -120,8 +120,9 @@ async function handle(req:NextRequest){
    const response=await providers[feature](internal);
    const result=await response.json();
    if(!response.ok||!usable(feature,result))throw new BillingError(502,'ai_failed_no_charge');
-   const ready=await database().query("UPDATE billing.requests SET state='ready',result=$4 WHERE customer_id=$1 AND environment=$2 AND request_id=$3 AND state='reserved' AND expires_at>now() RETURNING request_id",[a.id,a.environment,b.requestID,JSON.stringify(result)]);
-   if(!ready.rows.length)throw new BillingError(409,'request_expired');
+   // Durable usable result + credit debit in one transaction, before returning it.
+   // Client acknowledgement remains an idempotent no-op for older TestFlight builds.
+   await transaction(db=>commitUsableResult(db,a,b.requestID,result));
    return reply({requestID:b.requestID,result});
   }catch(e){await transaction(db=>settle(db,a,b.requestID,false));throw e;}
  }

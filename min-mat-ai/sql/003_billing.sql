@@ -2,8 +2,9 @@
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS billing;
 CREATE TABLE billing.customers (
- id uuid PRIMARY KEY, apple_sub text NOT NULL UNIQUE, created_at timestamptz NOT NULL DEFAULT now()
+ id uuid PRIMARY KEY, apple_sub text UNIQUE, app_environment text CHECK(app_environment IN ('Production','Sandbox') OR app_environment IS NULL), app_transaction_id text, created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX billing_customer_app_identity_idx ON billing.customers(app_environment,app_transaction_id) WHERE app_transaction_id IS NOT NULL;
 CREATE TABLE billing.challenges (id uuid PRIMARY KEY, nonce text NOT NULL, expires_at timestamptz NOT NULL);
 CREATE TABLE billing.sessions (
  token_hash text PRIMARY KEY, customer_id uuid NOT NULL REFERENCES billing.customers,
