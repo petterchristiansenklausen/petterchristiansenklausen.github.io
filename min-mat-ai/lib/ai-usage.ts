@@ -10,7 +10,7 @@ import { after } from "next/server";
  * Telemetry is disabled until MIN_MAT_TELEMETRY_DATABASE_URL is configured.
  * Logging failure must NEVER break an AI response.
  */
-export type AiFeature = "chef" | "inventory-photo" | "recipe-method" | "recipe-image";
+export type AiFeature = "chef" | "inventory-photo" | "recipe-method" | "recipe-image" | "recipe-scan";
 
 type GatewayBody = {
   id?: unknown;
