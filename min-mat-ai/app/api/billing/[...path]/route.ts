@@ -9,6 +9,7 @@ import { POST as chef } from '../../../../lib/providers/chef/route';
 import { POST as method } from '../../../../lib/providers/recipe-method/route';
 import { POST as inventory } from '../../../../lib/providers/inventory-photo/route';
 import { POST as image } from '../../../../lib/providers/recipe-image/route';
+import { POST as scan } from '../../../../lib/providers/recipe-scan/route';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 export const maxDuration=120;
@@ -101,7 +102,7 @@ async function handle(req:NextRequest){
   const state=await transaction(db=>settleClient(db,a,b.requestID,b.accept));return reply({state,...await status(a)});
  }
  if(path.startsWith('ai/')){
-  const feature=path.slice(3);const providers:Record<string,(request:NextRequest)=>Promise<Response>>={chef,'recipe-method':method,'inventory-photo':inventory,'recipe-image':image};
+  const feature=path.slice(3);const providers:Record<string,(request:NextRequest)=>Promise<Response>>={chef,'recipe-method':method,'inventory-photo':inventory,'recipe-image':image,'recipe-scan':scan};
   if(!providers[feature])throw new BillingError(404,'unknown_feature');
   if(!uuid(b.requestID)||!b.input||typeof b.input!=='object')throw new BillingError(400,'invalid_request');
   // Sandbox has the documented beta Pro allowance. Production requires a live Apple entitlement.
