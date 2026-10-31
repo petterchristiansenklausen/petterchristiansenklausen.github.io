@@ -106,7 +106,7 @@ async function handle(req:NextRequest){
   if(!providers[feature])throw new BillingError(404,'unknown_feature');
   if(!uuid(b.requestID)||!b.input||typeof b.input!=='object')throw new BillingError(400,'invalid_request');
   // Sandbox has the documented beta Pro allowance. Production requires a live Apple entitlement.
-  if(a.environment==='Production' || (typeof b.proTransaction==='string' && b.proTransaction.length>0)) {
+  // Sandbox/TestFlight uses the existing beta Pro allowance; never call Apple's purchase API\n  // for AI entitlement here. Production still requires current Apple verification.\n  if(a.environment==='Production') {
    if(typeof b.proTransaction!=='string')throw new BillingError(403,'pro_required');
    const pro=await currentPurchase(b.proTransaction,a.environment);
    if(pro.productId!==proID||pro.type!=='Non-Consumable'||pro.revocationDate||!a.appTransactionId||pro.appTransactionId!==a.appTransactionId||
