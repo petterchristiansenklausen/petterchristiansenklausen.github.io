@@ -20,3 +20,4 @@ REVOKE ALL ON public.min_mat_ai_daily FROM PUBLIC;
 GRANT SELECT ON public.min_mat_ai_daily TO mine_ai_reader_restricted;
 COMMENT ON VIEW public.min_mat_ai_daily IS
   'Daily counts and actual AI Gateway spend; NULL prices are explicitly counted';
+
