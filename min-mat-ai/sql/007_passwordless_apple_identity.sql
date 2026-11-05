@@ -1,4 +1,5 @@
--- Build 101: PREVIEW billing identity migration, not CloudKit and not telemetry.
+-- Build 101 PREVIEW billing database migration. Do not run against public telemetry DB.
+-- Safe additive customer mapping for verified AppTransaction (no email or Apple sign-in subject).
 BEGIN;
 ALTER TABLE billing.customers ALTER COLUMN apple_sub DROP NOT NULL;
 ALTER TABLE billing.customers ADD COLUMN IF NOT EXISTS app_environment text;

@@ -110,6 +110,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Kunne ikke analysere bildet akkurat nå." }, { status: 502 });
     }
 
+    if (["length", "content_filter"].includes(gatewayBody?.choices?.[0]?.finish_reason) || gatewayBody?.choices?.[0]?.message?.refusal) {
+      return NextResponse.json({ error: "AI result incomplete; no credits charged." }, { status: 502 });
+    }
     const content = gatewayBody?.choices?.[0]?.message?.content;
     if (typeof content !== "string") return NextResponse.json({ error: "AI ga ikke et gyldig svar." }, { status: 502 });
 
@@ -143,3 +146,4 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Kunne ikke analysere bildet akkurat nå." }, { status: 500 });
   }
 }
+

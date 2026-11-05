@@ -40,8 +40,7 @@ export async function settle(db:DB,a:Account,id:string,accept:boolean){
  const {rows}=await db.query('SELECT * FROM billing.requests WHERE customer_id=$1 AND environment=$2 AND request_id=$3',[a.id,a.environment,id]);
  const r=rows[0]; if(!r)throw new BillingError(404,'request_missing');
  if(r.state==='released'||r.state==='committed')return r.state;
- // A verified usable result cannot be refunded by a client-controlled "accept:false".
- // Only a genuinely failed provider call in 'reserved' state may release credits.
+ // A validated AI result cannot be released by a client-controlled accept:false.
  if(!accept&&r.state==='ready')throw new BillingError(409,'result_already_available');
  if(accept&&r.state!=='ready')throw new BillingError(409,'result_not_ready');
  const state=accept?'committed':'released';
@@ -50,40 +49,42 @@ export async function settle(db:DB,a:Account,id:string,accept:boolean){
  await db.query('UPDATE billing.requests SET state=$4,result=CASE WHEN $5 THEN result ELSE NULL END WHERE customer_id=$1 AND environment=$2 AND request_id=$3',[a.id,a.environment,id,state,accept]);
  return state;
 }
+/** Apple-authoritative purchase and refund lifecycle. Wallet rows are locked
+ * inside a database transaction, and ledger event IDs are globally idempotent
+ * per wallet. Old receipts are never enough to reverse a refund. */
 export async function applyPurchase(db:DB,a:Account,t:{transactionId:string,productId:string,credits:number,revoked:boolean,signedDate:number,refundReversed?:boolean}){
  await wallet(db,a);
  const prior=await db.query('SELECT * FROM billing.purchases WHERE environment=$1 AND transaction_id=$2 FOR UPDATE',[a.environment,t.transactionId]);
  const p=prior.rows[0];
- if(p&&(p.customer_id!==a.id||p.product_id!==t.productId||p.credits!==t.credits))
+ if(p&&(p.customer_id!==a.id || p.product_id!==t.productId || p.credits!==t.credits))
   throw new BillingError(409,'purchase_owner_mismatch');
- if(p){
-  if(t.refundReversed&&p.revoked&&!t.revoked){
+ if(p) {
+  // Only a fresh Apple-signed REFUND_REVERSED notification, plus a live API
+  // lookup confirming the transaction is NOT revoked, may restore a refund.
+  if(t.refundReversed && p.revoked && !t.revoked){
    const generation=Number(p.refund_generation);
    if(generation<1)throw new BillingError(409,'refund_generation_invalid');
    await db.query('UPDATE billing.purchases SET revoked=false,signed_at=GREATEST(signed_at,$3) WHERE environment=$1 AND transaction_id=$2',[a.environment,t.transactionId,t.signedDate]);
    await event(db,a,`refund-reversed:${t.transactionId}:${generation}`,p.credits,'apple_refund_reversed');
-  }else if(t.revoked&&!p.revoked){
+  } else if(t.revoked && !p.revoked){
    const generation=Number(p.refund_generation)+1;
    await db.query('UPDATE billing.purchases SET revoked=true,refund_generation=$3,signed_at=GREATEST(signed_at,$4) WHERE environment=$1 AND transaction_id=$2',[a.environment,t.transactionId,generation,t.signedDate]);
    await event(db,a,`refund:${t.transactionId}:${generation}`,-p.credits,'apple_refund');
   }
   return;
  }
+ // A reversal notification for an unknown purchase is not proof of an
+ // original grant. Do not credit a transaction without its recorded history.
  if(t.refundReversed)throw new BillingError(409,'purchase_not_recorded');
- await db.query('INSERT INTO billing.purchases(environment,transaction_id,customer_id,product_id,credits,revoked,signed_at,refund_generation) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-  [a.environment,t.transactionId,a.id,t.productId,t.credits,t.revoked,t.signedDate,t.revoked?1:0]);
+ await db.query('INSERT INTO billing.purchases(environment,transaction_id,customer_id,product_id,credits,revoked,signed_at,refund_generation) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[a.environment,t.transactionId,a.id,t.productId,t.credits,t.revoked,t.signedDate,t.revoked?1:0]);
  if(!t.revoked)await event(db,a,'purchase:'+t.transactionId,t.credits,'apple_purchase');
 }
 
-/**
- * The server, not the iPhone, is authoritative for a successful AI charge.
- * Store the validated result and book the debit in ONE database transaction.
- * This closes the "receive valid response then settle(false)" free-AI exploit.
- * The response remains retrievable by the same requestID for 24 hours, in
- * case the HTTP response is lost. Failure before committing rolls back.
+/** Server-authoritative charge of a usable response. Called within a transaction.
+ * Commit response and credits atomically; retain the result for 24h for recovery.
  */
 export async function commitUsableResult(db:DB,a:Account,id:string,result:unknown){
- await wallet(db,a); // Wallet row lock serializes commits/refunds for this user.
+ await wallet(db,a);
  const updated=await db.query(
   "UPDATE billing.requests SET state='ready', result=$4::jsonb, expires_at=now()+interval '24 hours' WHERE customer_id=$1 AND environment=$2 AND request_id=$3 AND state='reserved' AND expires_at>now() RETURNING request_id",
   [a.id,a.environment,id,JSON.stringify(result)]
@@ -94,6 +95,8 @@ export async function commitUsableResult(db:DB,a:Account,id:string,result:unknow
  return state;
 }
 
+// The caller can acknowledge delivered results. Only the server may release
+// an in-progress request after a real provider/validation error.
 export async function settleClient(db:DB,a:Account,id:string,accept:boolean){
  if(accept)return settle(db,a,id,true);
  await wallet(db,a);

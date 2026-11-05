@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID, generateKeyPairSync, sign, createHash } from 'node:crypto';
 import { verifyDeviceProof } from '../lib/billing/auth';
 
-test('Apple device proof + P-256 signature binds a one-use challenge',()=>{
+test('valid Apple device checksum and P-256 signed fresh challenge are accepted',()=>{
  const deviceVerificationID=randomUUID();
  const deviceVerificationNonce=randomUUID();
  const deviceVerification=createHash('sha384')
