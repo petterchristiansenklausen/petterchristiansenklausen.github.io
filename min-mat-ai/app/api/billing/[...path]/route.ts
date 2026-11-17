@@ -79,12 +79,20 @@ async function handle(req:NextRequest){
  if(path==='notifications')return notifications(b);
  const a=await authenticate(req);
  if(path==='logout') {await database().query('DELETE FROM billing.sessions WHERE token_hash=$1',[digest(req.headers.get('authorization')!.slice(7))]);return reply({ok:true});}
- if(path==='purchase'){await recordPurchase(a,await currentPurchase(b.signedTransaction,a.environment));return reply(await status(a));}
+ if(path==='purchase'){
+  const purchase=await currentPurchase(b.signedTransaction,a.environment,requestID(req));
+  if(process.env.VERCEL_ENV==='preview')console.info('min_mat_purchase_diagnostic',{requestID:requestID(req),stage:'apple_verified',route:'purchase'});
+  await recordPurchase(a,purchase);
+  if(process.env.VERCEL_ENV==='preview')console.info('min_mat_purchase_diagnostic',{requestID:requestID(req),stage:'ledger_applied',route:'purchase'});
+  return reply(await status(a));
+ }
  if(path==='claim-pro'){
   if(typeof b.signedTransaction!=='string'||b.signedTransaction.length>40000)throw new BillingError(400,'invalid_pro_proof');
-  const pro=await currentPurchase(b.signedTransaction,a.environment);
+  const pro=await currentPurchase(b.signedTransaction,a.environment,requestID(req));
+  if(process.env.VERCEL_ENV==='preview')console.info('min_mat_purchase_diagnostic',{requestID:requestID(req),stage:'apple_verified',route:'claim-pro'});
   if(pro.productId!==proID||pro.revocationDate)throw new BillingError(403,'pro_required');
   await recordPurchase(a,pro);
+  if(process.env.VERCEL_ENV==='preview')console.info('min_mat_purchase_diagnostic',{requestID:requestID(req),stage:'ledger_applied',route:'claim-pro'});
   return reply(await status(a));
  }
  if(path==='test-topup'){
@@ -162,6 +170,11 @@ async function safe(req:NextRequest){
   const category=safeCategory(e instanceof BillingError?e.category:undefined);
   const code=e instanceof BillingError?e.code:'billing_unavailable';
   const status=e instanceof BillingError?e.status:503;
+  // Only route, controlled error codes and a random request UUID are logged.
+  if(process.env.VERCEL_ENV==='preview'){
+   const route=req.nextUrl.pathname.endsWith('/purchase')?'purchase':req.nextUrl.pathname.endsWith('/claim-pro')?'claim-pro':null;
+   if(route)console.warn('min_mat_purchase_request_failure',{requestID:id,route,errorCode:code,status});
+  }
   aiLog(id,'billing',category,status);
   const response=reply({error:code,category,requestID:id},status);
   response.headers.set('X-MinMat-Request-ID',id);return response;
