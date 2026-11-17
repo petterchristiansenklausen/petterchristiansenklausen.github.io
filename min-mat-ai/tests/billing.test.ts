@@ -264,6 +264,19 @@ test('Preview purchase schema read-only diagnostic',async()=>{
   const {rows}=await pool.query(
    "SELECT column_name FROM information_schema.columns WHERE table_schema='billing' AND table_name='purchases'"
   );
+  // Only safe database locator metadata, never connection string credentials.
+  const locator=await pool.query("SELECT current_database() AS database, current_user AS runtime_role");
+  const owner=await pool.query(
+   "SELECT pg_get_userbyid(relowner) AS table_owner FROM pg_class WHERE oid='billing.purchases'::regclass"
+  );
+  let hostname='unknown';
+  try{ hostname=new URL(process.env.MIN_MAT_BILLING_DATABASE_URL).hostname; }catch{}
+  console.info('min_mat_preview_db_locator',{
+   database:locator.rows[0]?.database,
+   runtimeRole:locator.rows[0]?.runtime_role,
+   tableOwner:owner.rows[0]?.table_owner,
+   hostname
+  });
   const actual=new Set(rows.map((r:any)=>r.column_name));
   const expected=['environment','transaction_id','customer_id','product_id','credits','revoked','signed_at','refund_generation'];
   const missing=expected.filter(name=>!actual.has(name));
