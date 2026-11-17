@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {PGlite} from '@electric-sql/pglite';
-import {wallet,event,reserve,settle,settleClient,commitUsableResult,applyPurchase,type Account} from '../lib/billing/ledger';
+import {wallet,event,reserve,settle,settleClient,commitUsableResult,applyPurchase,sandboxDailyCreditLimit,sandboxDailyCreditUsage,type Account} from '../lib/billing/ledger';
 import {canTopUp} from '../lib/billing/auth';
 import {usable} from '../lib/billing/validation';
 import type {DB} from '../lib/billing/db';
@@ -249,3 +249,85 @@ test('conversation answer commits once; invalid and legacy text answers release 
 });
 
 
+
+
+test('Sandbox daily cap allows exactly 50 used credits and blocks extra spending',async()=>{
+ const a=await account(300);
+ assert.equal(sandboxDailyCreditLimit(a),50);
+ // Six 8-credit results and a 2-credit result = 50.
+ for(let i=0;i<6;i++){
+  const id=randomUUID();
+  await tx(db=>reserve(db,a,id,'recipe-image','quota-'+i,8));
+  await ready(a,id); await tx(db=>settle(db,a,id,true));
+ }
+ const last=randomUUID();
+ await tx(db=>reserve(db,a,last,'inventory-photo','last-two',2));
+ await ready(a,last);await tx(db=>settle(db,a,last,true));
+ const usage=await tx(db=>sandboxDailyCreditUsage(db,a));
+ assert.deepEqual(usage,{spent:50,pending:0,remaining:0});
+ await assert.rejects(tx(db=>reserve(db,a,randomUUID(),'recipe-method','over-cap',1)),
+  (error:any)=>error.code==='test_daily_credit_limit'&&error.status===429);
+ assert.equal((await snapshot(a)).balance,250);
+});
+
+test('Sandbox cap counts pending credits, releases failures, and handles mixed prices',async()=>{
+ const a=await account(300);
+ const ids=Array.from({length:6},()=>randomUUID());
+ for(const [i,id] of ids.entries())await tx(db=>reserve(db,a,id,'recipe-image','pending-'+i,8));
+ assert.deepEqual(await tx(db=>sandboxDailyCreditUsage(db,a)),{spent:0,pending:48,remaining:2});
+ await assert.rejects(tx(db=>reserve(db,a,randomUUID(),'chef','blocked-three',3)),
+  (error:any)=>error.code==='test_daily_credit_limit');
+ // Supplier failure before output does not spend, and releases the quota.
+ await tx(db=>settle(db,a,ids[5],false));
+ assert.deepEqual(await tx(db=>sandboxDailyCreditUsage(db,a)),{spent:0,pending:40,remaining:10});
+ const three=randomUUID(); await tx(db=>reserve(db,a,three,'chef','allowed-three',3));
+ assert.deepEqual(await tx(db=>sandboxDailyCreditUsage(db,a)),{spent:0,pending:43,remaining:7});
+});
+
+test('replay of a completed AI request remains idempotent even after the daily cap is full',async()=>{
+ const a=await account(100);
+ const ids=Array.from({length:5},()=>randomUUID());
+ for(const [i,id] of ids.entries()){
+  await tx(db=>reserve(db,a,id,'recipe-image','idem-'+i,10));
+  await ready(a,id); await tx(db=>settle(db,a,id,true));
+ }
+ assert.equal((await tx(db=>sandboxDailyCreditUsage(db,a)))?.remaining,0);
+ const repeated=await tx(db=>reserve(db,a,ids[0],'recipe-image','idem-0',10));
+ assert.equal(repeated.fresh,false);
+ assert.equal(repeated.state,'committed');
+ await assert.rejects(tx(db=>reserve(db,a,ids[0],'recipe-image','different-input',10)),
+  (error:any)=>error.code==='request_id_reused');
+});
+
+test('UTC-day quota follows the request day and resets without resetting wallet credits',async()=>{
+ const a=await account(200),id=randomUUID();
+ await tx(db=>reserve(db,a,id,'recipe-image','yesterday',8));
+ await ready(a,id);await tx(db=>settle(db,a,id,true));
+ assert.equal((await tx(db=>sandboxDailyCreditUsage(db,a)))?.spent,8);
+ // Simulate a completed request from a previous UTC day without changing balances.
+ await pg.query("UPDATE billing.requests SET created_at=now()-interval '2 days' WHERE customer_id=$1 AND request_id=$2",[a.id,id]);
+ assert.deepEqual(await tx(db=>sandboxDailyCreditUsage(db,a)),{spent:0,pending:0,remaining:50});
+ assert.equal((await snapshot(a)).balance,192);
+});
+
+test('quota is shared across the same Apple wallet on multiple devices, but not across testers',async()=>{
+ const first=await account(100),sameWallet={...first},second=await account(100);
+ const id=randomUUID();
+ await tx(db=>reserve(db,first,id,'recipe-image','first-device',8));
+ assert.equal((await tx(db=>sandboxDailyCreditUsage(db,sameWallet)))?.pending,8);
+ assert.equal((await tx(db=>sandboxDailyCreditUsage(db,second)))?.remaining,50);
+ await tx(db=>settle(db,sameWallet,id,false));
+ assert.equal((await tx(db=>sandboxDailyCreditUsage(db,first)))?.remaining,50);
+});
+
+test('Production wallets are never subject to the Sandbox credit cap',async()=>{
+ const a=await account(100),p={...a,environment:'Production' as const};
+ assert.equal(sandboxDailyCreditLimit(p),null);
+ assert.equal(await tx(db=>sandboxDailyCreditUsage(db,p)),null);
+ await tx(async db=>{await wallet(db,p);await event(db,p,'prod-seed',100,'apple_purchase');});
+ for(let i=0;i<8;i++){
+  const id=randomUUID();await tx(db=>reserve(db,p,id,'recipe-image','production-'+i,8));
+  await ready(p,id);await tx(db=>settle(db,p,id,true));
+ }
+ assert.equal((await snapshot(p)).balance,36);
+});
