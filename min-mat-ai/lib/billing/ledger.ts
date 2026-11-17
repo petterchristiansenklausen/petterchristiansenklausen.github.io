@@ -1,6 +1,34 @@
 import type { DB } from './db';
 import { BillingError } from './db';
 export type Account={id:string,environment:'Sandbox'|'Production',sub:string,appTransactionId?:string};
+// TestFlight-only AI consumption cap. Purchases and wallet balances are never reset.
+export const SANDBOX_DAILY_CREDIT_LIMIT=50;
+export function sandboxDailyCreditLimit(a:Account):number|null {
+ // Production is never subject to a Sandbox quota, even if misconfigured.
+ return a.environment==='Sandbox' && process.env.VERCEL_ENV!=='production'
+  ? SANDBOX_DAILY_CREDIT_LIMIT : null;
+}
+/** Count successfully spent + still pending credits for the UTC day of each
+ * request's creation. Failed/released work does not consume the allowance.
+ * The caller must hold the wallet row lock before using this for admission:
+ * this makes simultaneous requests from all the account's devices atomic. */
+export async function sandboxDailyCreditUsage(db:DB,a:Account):
+ Promise<{spent:number,pending:number,remaining:number}|null> {
+ const limit=sandboxDailyCreditLimit(a);
+ if(limit===null)return null;
+ const {rows}=await db.query(`
+  SELECT
+   COALESCE(SUM(cost) FILTER (WHERE state='committed'),0)::int AS spent,
+   COALESCE(SUM(cost) FILTER (WHERE state IN ('reserved','ready')),0)::int AS pending
+  FROM billing.requests
+  WHERE customer_id=$1 AND environment=$2
+   AND created_at >= (date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+   AND created_at < ((date_trunc('day',now() AT TIME ZONE 'UTC') + interval '1 day') AT TIME ZONE 'UTC')
+ `,[a.id,a.environment]);
+ const spent=Number(rows[0]?.spent||0);
+ const pending=Number(rows[0]?.pending||0);
+ return {spent,pending,remaining:Math.max(0,limit-spent-pending)};
+}
 export async function wallet(db:DB,a:Account) {
  await db.query('INSERT INTO billing.wallets(customer_id,environment) VALUES($1,$2) ON CONFLICT DO NOTHING',[a.id,a.environment]);
  const {rows}=await db.query('SELECT * FROM billing.wallets WHERE customer_id=$1 AND environment=$2 FOR UPDATE',[a.id,a.environment]);
@@ -25,6 +53,13 @@ export async function reserve(db:DB,a:Account,id:string,feature:string,hash:stri
   return {fresh:false,...old.rows[0]};
  }
  if(w.balance-w.reserved<cost)throw new BillingError(402,'insufficient_credits');
+ // Check only NEW work, after idempotent replay lookup. Pending reservations
+ // also count, so parallel calls cannot exceed 50 credits across devices.
+ const sandboxLimit=sandboxDailyCreditLimit(a);
+ if(sandboxLimit!==null) {
+  const usage=await sandboxDailyCreditUsage(db,a);
+  if(!usage||usage.remaining<cost)throw new BillingError(429,'test_daily_credit_limit');
+ }
  // Durable limits include failed/refunded attempts, and a global supplier-spend ceiling.
  for(const [scope,limit] of [['customer:'+a.id,30],['global',Number(process.env.MIN_MAT_AI_DAILY_LIMIT||200)]] as const){
   const r=await db.query('INSERT INTO billing.daily_limits(scope,attempts) VALUES($1,1) ON CONFLICT(scope,day) DO UPDATE SET attempts=billing.daily_limits.attempts+1 RETURNING attempts',[scope]);
