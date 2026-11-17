@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "node scripts/preview-billing-refund-generation-migration.mjs && npm test && next build",
+    "build": "npm test && next build",
     "start": "next start",
     "test": "node --import tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
