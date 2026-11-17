@@ -18,24 +18,49 @@ const reply=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{'
 const uuid=(s:any)=>typeof s==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 async function tariff(){return (await database().query("SELECT value FROM billing.config WHERE key='tariff'")).rows[0].value;}
 async function status(a:Account){return transaction(async db=>{const w=await wallet(db,a);return {balance:w.balance,reserved:w.reserved,available:w.balance-w.reserved,environment:a.environment,accountToken:a.id,canTopUp:canTopUp(a)};});}
-async function recordPurchase(a:Account,t:any,refundReversed=false){
- // The user may restore an older Pro purchase made before appAccountToken support.
- // Never accept an unbound credit-pack purchase; it MUST belong to this wallet.
- const owned = t.appAccountToken?.toLowerCase() === a.id.toLowerCase();
- const legacyPro = t.productId === proID && !t.appAccountToken &&
-   !!a.appTransactionId && t.appTransactionId === a.appTransactionId;
- if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==a.environment||
-    !a.appTransactionId||t.appTransactionId!==a.appTransactionId||(!owned&&!legacyPro))
-   throw new BillingError(403,'purchase_owner_mismatch');
- const config=await tariff();
- let credits:number;
- try { credits=purchaseCredits(config,t.productId); }
- catch { throw new BillingError(400,'invalid_product'); }
- const ledgerId=purchaseLedgerId(t);
- if(!ledgerId||t.quantity!==1||
-   (t.productId===proID?t.type!=='Non-Consumable':t.type!=='Consumable'))
-   throw new BillingError(400,'invalid_product');
- await transaction(db=>applyPurchase(db,a,{transactionId:ledgerId,productId:t.productId,credits,revoked:!!t.revocationDate,signedDate:t.signedDate||0,refundReversed}));
+// Safe, Preview-only diagnostics. Never record a receipt, wallet ID, secret or SQL text.
+function logPurchaseBookkeepingFailure(stage:string,error:unknown,correlationID?:string){
+ if(process.env.VERCEL_ENV!=='preview'||!correlationID)return;
+ const x=error!==null&&typeof error==='object'?error as Record<string,unknown>:{};
+ const rawSQLState=x.code;
+ const sqlState=typeof rawSQLState==='string'&&/^[0-9A-Z]{5}$/.test(rawSQLState)?rawSQLState:null;
+ const errorKind=error instanceof BillingError?'billing_error':
+  error instanceof TypeError?'type_error':
+  error instanceof RangeError?'range_error':
+  error instanceof Error?'unexpected_error':'other_error';
+ console.warn('min_mat_purchase_bookkeeping_failure',{
+  requestID:correlationID,stage,errorKind,sqlState,
+  appErrorCode:error instanceof BillingError?error.code:null
+ });
+}
+async function recordPurchase(a:Account,t:any,refundReversed=false,correlationID?:string){
+ let stage='verify_wallet_ownership';
+ try{
+  // The user may restore an older Pro purchase made before appAccountToken support.
+  // Never accept an unbound credit-pack purchase; it MUST belong to this wallet.
+  const owned = t.appAccountToken?.toLowerCase() === a.id.toLowerCase();
+  const legacyPro = t.productId === proID && !t.appAccountToken &&
+    !!a.appTransactionId && t.appTransactionId === a.appTransactionId;
+  if(t.bundleId!=='com.pettersapps.MinMat'||t.environment!==a.environment||
+     !a.appTransactionId||t.appTransactionId!==a.appTransactionId||(!owned&&!legacyPro))
+    throw new BillingError(403,'purchase_owner_mismatch');
+  stage='read_tariff';
+  const config=await tariff();
+  stage='check_product_tariff';
+  let credits:number;
+  try { credits=purchaseCredits(config,t.productId); }
+  catch { throw new BillingError(400,'invalid_product'); }
+  stage='validate_transaction';
+  const ledgerId=purchaseLedgerId(t);
+  if(!ledgerId||t.quantity!==1||
+    (t.productId===proID?t.type!=='Non-Consumable':t.type!=='Consumable'))
+    throw new BillingError(400,'invalid_product');
+  stage='persist_purchase_ledger';
+  await transaction(db=>applyPurchase(db,a,{transactionId:ledgerId,productId:t.productId,credits,revoked:!!t.revocationDate,signedDate:t.signedDate||0,refundReversed}));
+ }catch(error){
+  logPurchaseBookkeepingFailure(stage,error,correlationID);
+  throw error;
+ }
 }
 async function notifications(body:any){
  let n:any,environment:'Sandbox'|'Production'='Production';
@@ -82,7 +107,7 @@ async function handle(req:NextRequest){
  if(path==='purchase'){
   const purchase=await currentPurchase(b.signedTransaction,a.environment,requestID(req));
   if(process.env.VERCEL_ENV==='preview')console.info('min_mat_purchase_diagnostic',{requestID:requestID(req),stage:'apple_verified',route:'purchase'});
-  await recordPurchase(a,purchase);
+  await recordPurchase(a,purchase,false,requestID(req));
   if(process.env.VERCEL_ENV==='preview')console.info('min_mat_purchase_diagnostic',{requestID:requestID(req),stage:'ledger_applied',route:'purchase'});
   return reply(await status(a));
  }
@@ -91,7 +116,7 @@ async function handle(req:NextRequest){
   const pro=await currentPurchase(b.signedTransaction,a.environment,requestID(req));
   if(process.env.VERCEL_ENV==='preview')console.info('min_mat_purchase_diagnostic',{requestID:requestID(req),stage:'apple_verified',route:'claim-pro'});
   if(pro.productId!==proID||pro.revocationDate)throw new BillingError(403,'pro_required');
-  await recordPurchase(a,pro);
+  await recordPurchase(a,pro,false,requestID(req));
   if(process.env.VERCEL_ENV==='preview')console.info('min_mat_purchase_diagnostic',{requestID:requestID(req),stage:'ledger_applied',route:'claim-pro'});
   return reply(await status(a));
  }
