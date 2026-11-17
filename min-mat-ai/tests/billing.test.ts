@@ -247,3 +247,31 @@ test('conversation answer commits once; invalid and legacy text answers release 
   assert.equal((await snapshot(a)).reserved,0);
  }
 });
+
+
+// Read-only diagnostic against the ACTUAL Preview billing database.
+// It runs during a Preview build only; it never reads purchase rows, mutates
+// schema, reveals credentials, or makes Production DB changes.
+test('Preview purchase schema read-only diagnostic',async()=>{
+ if(process.env.VERCEL_ENV!=='preview'||!process.env.MIN_MAT_BILLING_DATABASE_URL)return;
+ const {Pool}=await import('pg');
+ const pool=new Pool({
+  connectionString:process.env.MIN_MAT_BILLING_DATABASE_URL,
+  connectionTimeoutMillis:5000,
+  max:1
+ });
+ try{
+  const {rows}=await pool.query(
+   "SELECT column_name FROM information_schema.columns WHERE table_schema='billing' AND table_name='purchases'"
+  );
+  const actual=new Set(rows.map((r:any)=>r.column_name));
+  const expected=['environment','transaction_id','customer_id','product_id','credits','revoked','signed_at','refund_generation'];
+  const missing=expected.filter(name=>!actual.has(name));
+  console.info('min_mat_purchase_schema_diagnostic',{schemaAccessible:true,missingColumns:missing,expectedColumns:expected.length,actualColumns:rows.length});
+ }catch{
+  // No server connection URLs, SQL text, stack traces or credentials in logs.
+  console.warn('min_mat_purchase_schema_diagnostic',{schemaAccessible:false});
+ }finally{
+  await pool.end();
+ }
+});
