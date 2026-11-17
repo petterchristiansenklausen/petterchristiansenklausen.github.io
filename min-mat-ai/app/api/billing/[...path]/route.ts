@@ -3,7 +3,7 @@ import { NextRequest,NextResponse } from 'next/server';
 import { billingEnabled,billingMode,requireBillingEnvironment,database,transaction,BillingError } from '../../../../lib/billing/db';
 import { authenticate,challenge,deviceLogin,canTopUp,digest } from '../../../../lib/billing/auth';
 import { verifier,currentPurchase,proID } from '../../../../lib/billing/apple';
-import { wallet,event,reserve,settle,settleClient,commitUsableResult,applyPurchase,type Account } from '../../../../lib/billing/ledger';
+import { wallet,event,reserve,settle,settleClient,commitUsableResult,applyPurchase,sandboxDailyCreditLimit,sandboxDailyCreditUsage,type Account } from '../../../../lib/billing/ledger';
 import { usable } from '../../../../lib/billing/validation';
 import { purchaseCredits, purchaseLedgerId } from '../../../../lib/billing/pricing';
 import { POST as chef } from '../../../../lib/providers/chef/route';
@@ -17,7 +17,20 @@ export const maxDuration=120;
 const reply=(data:unknown,status=200)=>NextResponse.json(data,{status,headers:{'Cache-Control':'no-store'}});
 const uuid=(s:any)=>typeof s==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 async function tariff(){return (await database().query("SELECT value FROM billing.config WHERE key='tariff'")).rows[0].value;}
-async function status(a:Account){return transaction(async db=>{const w=await wallet(db,a);return {balance:w.balance,reserved:w.reserved,available:w.balance-w.reserved,environment:a.environment,accountToken:a.id,canTopUp:canTopUp(a)};});}
+async function status(a:Account){return transaction(async db=>{
+ const w=await wallet(db,a); // Expired reservations are released before computing daily usage.
+ const daily=await sandboxDailyCreditUsage(db,a);
+ return {
+  balance:w.balance,reserved:w.reserved,available:w.balance-w.reserved,
+  environment:a.environment,accountToken:a.id,canTopUp:canTopUp(a),
+  ...(daily?{
+   dailyCreditLimit:sandboxDailyCreditLimit(a),
+   dailyCreditsSpent:daily.spent,
+   dailyCreditsPending:daily.pending,
+   dailyCreditsRemaining:daily.remaining
+  }:{})
+ };
+});}
 // Safe, Preview-only diagnostics. Never record a receipt, wallet ID, secret or SQL text.
 function logPurchaseBookkeepingFailure(stage:string,error:unknown,correlationID?:string){
  if(process.env.VERCEL_ENV!=='preview'||!correlationID)return;
