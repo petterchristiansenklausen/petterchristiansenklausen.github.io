@@ -1,10 +1,11 @@
+import { aiFailure, requestID, gatewayCategory, exceptionCategory } from "../../ai-diagnostics";
 import { getVercelOidcToken } from "@vercel/oidc";
 import { recordAiUsageLater } from "../../ai-usage";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 120;
 
 type InventoryItem = {
   id?: string;
@@ -23,6 +24,8 @@ type ChefRequest = {
   maxMinutes?: number;
   allowMissing?: boolean;
   message?: string;
+  // Only the recipe library requires a recipe from a freeform request.
+  responseMode?: "conversation" | "recipe";
   imageDataURL?: string;
   recentMeals?: string[];
   preferences?: {
@@ -179,23 +182,28 @@ function normalizeSuggestion(raw: unknown, inventoryIds: Set<string>, defaultSer
 }
 
 export async function POST(request: NextRequest) {
+  const id = requestID(request);
+  const fail = (message: string, status: number, category: Parameters<typeof aiFailure>[4]) => aiFailure(id, "chef", message, status, category);
   try {
     const expectedClientToken = process.env.MIN_MAT_CLIENT_TOKEN;
     const suppliedClientToken = request.headers.get("x-minmat-client");
     if (!expectedClientToken || suppliedClientToken !== expectedClientToken) {
-      return NextResponse.json({ error: "Ugyldig klient." }, { status: 401 });
+      return fail("Ugyldig klient.", 401, "client_auth");
     }
 
     if (!consumeRateLimit(request)) {
-      return NextResponse.json({ error: "For mange AI-Kokk-forespørsler akkurat nå. Prøv igjen litt senere." }, { status: 429 });
+      return fail("For mange AI-Kokk-forespørsler akkurat nå. Prøv igjen litt senere.", 429, "gateway_rate_limit");
     }
 
     const contentLength = Number(request.headers.get("content-length") || "0");
     if (contentLength > 1500000) {
-      return NextResponse.json({ error: "Forespørselen er for stor." }, { status: 413 });
+      return fail("Forespørselen er for stor.", 413, "invalid_input");
     }
 
-    const raw = await request.json() as ChefRequest;
+    let raw: ChefRequest;
+    try { raw = await request.json(); }
+    catch { return fail("Ugyldig forespørsel.", 400, "invalid_input"); }
+    if (!raw || typeof raw !== "object") return fail("Ugyldig forespørsel.", 400, "invalid_input");
     const inventory = sanitizeInventory(raw.inventory);
     const validActions = ["ideas", "use_soon", "dinner", "weekly_plan", "daily_plan", "single_meal", "freeform"];
     const action = validActions.includes(raw.action || "") ? String(raw.action) : "ideas";
@@ -206,6 +214,9 @@ export async function POST(request: NextRequest) {
     const validSlots = ["frokost", "lunsj", "mellommåltid", "middag", "kveld"];
     const mealSlot = validSlots.includes(raw.mealSlot || "") ? raw.mealSlot : "middag";
     const message = cleanString(raw.message, 1000);
+    // Only upgraded clients explicitly requesting conversation may receive text alone.
+    // Older clients and the recipe editor still require actual recipe suggestions.
+    const responseMode = action === "freeform" && raw.responseMode === "conversation" ? "conversation" : "recipe";
     const imageDataURL = typeof raw.imageDataURL === "string" &&
       raw.imageDataURL.startsWith("data:image/jpeg;base64,") &&
       raw.imageDataURL.length <= 1200000
@@ -219,15 +230,14 @@ export async function POST(request: NextRequest) {
       : [];
 
     if (inventory.length === 0 && !message && !imageDataURL) {
-      return NextResponse.json(
-        { error: "Legg inn mat i matlageret eller skriv hva du ønsker hjelp med." },
-        { status: 400 }
-      );
+      return fail("Legg inn mat i matlageret eller skriv hva du ønsker hjelp med.", 400, "invalid_input");
     }
 
-    const token = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || await getVercelOidcToken();
+    let token: string | undefined;
+    try { token = process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || await getVercelOidcToken(); }
+    catch { return fail("AI-tjenesten er ikke konfigurert.", 503, "gateway_auth"); }
     if (!token) {
-      return NextResponse.json({ error: "AI-tjenesten er ikke konfigurert." }, { status: 503 });
+      return fail("AI-tjenesten er ikke konfigurert.", 503, "gateway_auth");
     }
 
     const actionInstruction: Record<string, string> = {
@@ -237,7 +247,9 @@ export async function POST(request: NextRequest) {
       weekly_plan: "Lag en variert 7-dagers middagsplan. Returner 7 forslag og fyll mealPlan med dayOffset 0-6.",
       daily_plan: "Lag en komplett, variert dagsmeny for én dag med FEM forslag i denne rekkefølgen: frokost, lunsj, mellommåltid, middag, kveldsmat. Fyll mealPlan med fem oppføringer, alle dayOffset 0, og slot nøyaktig: frokost, lunsj, mellommåltid, middag, kveld. Sjekk at ingrediensene samlet sett står i rimelig forhold til matlageret.",
       single_meal: "Lag NØYAKTIG ÉTT komplett og realistisk måltid til måltidstypen " + mealSlot + ". Returner én suggestion og mealPlan: [].",
-      freeform: "Svar på brukerens konkrete ønske, men knytt svaret til matlageret når det er relevant."
+      freeform: responseMode === "recipe"
+        ? "Lag minst én fullstendig oppskrift med ingredienser og fremgangsmåte. Du må returnere en gyldig suggestion."
+        : "Svar direkte på brukerens matspørsmål. Vanlige spørsmål kan besvares kun i answer, med suggestions: [] og mealPlan: []. Lag fullstendige suggestions bare når brukeren faktisk ber om en oppskrift."
     };
 
     const system = [
@@ -249,6 +261,11 @@ export async function POST(request: NextRequest) {
       "Hvis recentMeals er oppgitt, varier forslagene og unngå å gjenta disse rettene unødvendig. Gjenta bare når brukeren ber om det eller det er klart mest hensiktsmessig.",
       "Tillatte unit-verdier er kun: " + allowedUnits.join(", ") + ".",
       "Returner KUN gyldig JSON, uten markdown eller forklarende tekst utenfor JSON.",
+      "For freeform-spørsmål om mat, råvarer, ernæring, sukker, fett, tilberedning og oppbevaring: svar i answer. Bruk suggestions: [] og mealPlan: [] når ingen oppskrift etterspørres.",
+      "For freeform-spørsmål som ber om en ny oppskrift eller konkret oppskriftsendring: returner en fullstendig oppskrift i suggestions, også når du forklarer noe i answer.",
+      "For alle andre handlinger enn freeform må suggestions inneholde ferdige, brukbare oppskrifter. Ikke erstatt måltidsforslag med tekst alene.",
+      "Når brukeren spør om eksakt næringsinnhold i et bestemt merkeprodukt: du har ikke tilgang til levende varedeklarasjoner. Ikke oppgi oppdiktede tall. Si at produktvariant og oppdatert næringsdeklarasjon må sjekkes og be eventuelt om bilde eller etikett.",
+      "Unngå medisinske diagnoser og bastante helsepåstander; gi nøktern generell matinformasjon.",
       "",
       "JSON-format:",
       "{",
@@ -278,7 +295,11 @@ export async function POST(request: NextRequest) {
       "Ikke returner mer enn 7 suggestions, 16 ingredienser per rett eller 10 steg per rett.",
       "Prioriter alltid en HELT FERDIG, kortfattet JSON-respons. Unngå lange introduksjoner og fylltekst.",
       "Bruk vanligvis 3-6 korte steps per rett, og 2-4 korte steps ved ukeplan eller dagsplan.",
-      "Hold answer under 200 tegn og summary under 140 tegn. Behold alle nødvendige ingredienser og konkrete tilberedningstrinn."
+      "For freeform er answer et selvstendig svar: skriv normalt 1-4 korte avsnitt, maksimalt 1200 tegn. For andre handlinger hold answer under 200 tegn. Hold summary under 140 tegn.",
+      "Behold alle nødvendige ingredienser og konkrete tilberedningstrinn når en oppskrift er etterspurt.",
+      action === "freeform" && responseMode === "conversation"
+        ? "VIKTIG FOR DENNE MELDINGEN: Ved et vanlig matspørsmål, send {\"answer\":\"selvstendig svar\",\"suggestions\":[],\"mealPlan\":[]}. Ikke finn på oppskrifter hvis det ikke er bedt om dem. Ved ønske om oppskrift, inkluder fullstendig suggestions."
+        : "VIKTIG FOR DENNE MELDINGEN: Returner en eller flere komplette oppskrifter i suggestions. Svar med tekst alene er ikke godkjent."
     ].join("\n");
 
     const userPayload = {
@@ -289,6 +310,7 @@ export async function POST(request: NextRequest) {
       allowMissing,
       preferences: { allergies, diet, dislikes },
       message,
+      responseMode,
       recentMeals,
       inventory,
       imageAttached: Boolean(imageDataURL)
@@ -316,36 +338,33 @@ export async function POST(request: NextRequest) {
         response_format: { type: "json_object" },
         max_completion_tokens: action === "weekly_plan" ? 5000 : action === "daily_plan" ? 4400 : 3200
       }),
-      signal: AbortSignal.timeout(28000)
+      signal: AbortSignal.timeout(80000)
     });
 
-    const gatewayBody = await gatewayResponse.json().catch(() => null) as any;
+    let gatewayBody: any;
+    try { gatewayBody = await gatewayResponse.json(); }
+    catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      return fail("AI-tjenesten returnerte et uleselig svar.", 502, "invalid_json");
+    }
     recordAiUsageLater("chef", gatewayResponse.status, gatewayBody, "openai/gpt-5.6-luna", token);
     if (!gatewayResponse.ok) {
       // Logg aldri feilmeldinger fra leverandøren: de kan inneholde brukerinnhold.
-      console.warn("min_mat_chef_gateway_failed", { status: gatewayResponse.status });
-      return NextResponse.json({ error: "AI-Kokk er midlertidig utilgjengelig." }, { status: 502 });
+      return fail("AI-Kokk er midlertidig utilgjengelig.", 502, gatewayCategory(gatewayResponse.status));
     }
 
     const choice = gatewayBody?.choices?.[0];
     const finishReason = choice?.finish_reason;
     if (finishReason === "length") {
       // En avbrutt JSON-respons skal aldri telle som levert resultat i appens dagskvote.
-      console.warn("min_mat_chef_incomplete_output", { reason: "token_limit", action });
-      return NextResponse.json(
-        { error: "AI-Kokk rakk ikke fullføre oppskriften. Forsøket teller ikke i dagskvoten. Prøv et kortere spørsmål." },
-        { status: 502, headers: { "Cache-Control": "no-store" } }
-      );
+      return fail("AI-Kokk rakk ikke fullføre oppskriften. Forsøket teller ikke i dagskvoten. Prøv et kortere spørsmål.", 502, "incomplete_output");
     }
     if (finishReason === "content_filter" || choice?.message?.refusal) {
-      return NextResponse.json(
-        { error: "AI-Kokk kunne ikke fullføre denne forespørselen. Forsøket teller ikke i dagskvoten." },
-        { status: 502, headers: { "Cache-Control": "no-store" } }
-      );
+      return fail("AI-Kokk kunne ikke fullføre denne forespørselen. Forsøket teller ikke i dagskvoten.", 502, "content_filter");
     }
     const content = choice?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
-      return NextResponse.json({ error: "AI-Kokk ga ikke et gyldig svar." }, { status: 502 });
+      return fail("AI-Kokk ga ikke et gyldig svar.", 502, "invalid_result");
     }
 
     let parsed: any;
@@ -353,10 +372,7 @@ export async function POST(request: NextRequest) {
       parsed = JSON.parse(stripCodeFence(content));
     } catch {
       // Ikke logg rå modelltekst: den kan inneholde personopplysninger og oppskrifter.
-      console.warn("min_mat_chef_invalid_json", {
-        reason: typeof finishReason === "string" ? finishReason : "unknown", action
-      });
-      return NextResponse.json({ error: "AI-Kokk ga et ufullstendig svar. Forsøket teller ikke i dagskvoten. Prøv igjen." }, { status: 502 });
+      return fail("AI-Kokk ga et ufullstendig svar. Forsøket teller ikke i dagskvoten. Prøv igjen.", 502, "invalid_json");
     }
 
     const inventoryIds = new Set(inventory.map((item) => item.id).filter((id): id is string => Boolean(id)));
@@ -408,13 +424,22 @@ export async function POST(request: NextRequest) {
     }
     if (action === "single_meal") suggestions = suggestions.slice(0, 1);
 
-    if (suggestions.length === 0) {
-      return NextResponse.json({ error: "AI-Kokk fant ingen brukbare forslag. Prøv igjen." }, { status: 502 });
+    const answer = cleanString(parsed?.answer, 1200);
+    // Text-only is a usable result only for freeform conversation, never for
+    // meals or for the dedicated recipe-editor flow.
+    const validTextOnly = action === "freeform" && responseMode !== "recipe" &&
+      suggestions.length === 0 && answer.length > 0 &&
+      // Do not turn a malformed/filtered recipe into a billable text answer.
+      Array.isArray(parsed?.suggestions) && parsed.suggestions.length === 0 &&
+      Array.isArray(parsed?.mealPlan) && parsed.mealPlan.length === 0;
+    if (suggestions.length === 0 && !validTextOnly) {
+      return fail("AI-Kokk fant ingen brukbare forslag. Prøv igjen.", 502, "no_suggestions");
     }
+    if (validTextOnly) mealPlan = [];
 
     return NextResponse.json(
       {
-        answer: cleanString(parsed?.answer, 1200),
+        answer,
         suggestions,
         mealPlan,
         model: gatewayBody?.model || "openai/gpt-5.6-luna"
@@ -423,7 +448,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     // Ikke logg hele unntaket, som kan inneholde brukerinnhold eller leverandørdata.
-    console.error("min_mat_chef_route_failed", { type: error instanceof Error ? error.name : "unknown" });
-    return NextResponse.json({ error: "Kunne ikke kontakte AI-Kokk akkurat nå." }, { status: 500 });
+    return fail("Kunne ikke kontakte AI-Kokk akkurat nå.", 502, exceptionCategory(error));
   }
 }
+

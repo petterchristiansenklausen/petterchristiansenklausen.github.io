@@ -136,6 +136,9 @@ export async function POST(request: NextRequest) {
       console.error("Recipe method AI gateway status", response.status);
       return failure("AI-tjenesten kunne ikke lage fremgangsmåten akkurat nå.", 502);
     }
+    if (["length", "content_filter"].includes(reply?.choices?.[0]?.finish_reason) || reply?.choices?.[0]?.message?.refusal) {
+      return NextResponse.json({ error: "AI result incomplete; no credits charged." }, { status: 502 });
+    }
     const text = reply?.choices?.[0]?.message?.content;
     if (typeof text !== "string" || !text) {
       return failure("AI returnerte ikke tekst. Prøv igjen.", 502);
@@ -154,3 +157,4 @@ export async function POST(request: NextRequest) {
     return failure("AI-tjenesten svarte ikke i tide. Prøv igjen.", 504);
   }
 }
+

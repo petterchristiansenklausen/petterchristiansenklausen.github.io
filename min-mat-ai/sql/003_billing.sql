@@ -2,7 +2,7 @@
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS billing;
 CREATE TABLE billing.customers (
- id uuid PRIMARY KEY, apple_sub text UNIQUE, app_environment text CHECK(app_environment IN ('Production','Sandbox') OR app_environment IS NULL), app_transaction_id text, created_at timestamptz NOT NULL DEFAULT now()
+ id uuid PRIMARY KEY, apple_sub text UNIQUE, app_environment text CHECK (app_environment IN ('Production','Sandbox') OR app_environment IS NULL), app_transaction_id text, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX billing_customer_app_identity_idx ON billing.customers(app_environment,app_transaction_id) WHERE app_transaction_id IS NOT NULL;
 CREATE TABLE billing.challenges (id uuid PRIMARY KEY, nonce text NOT NULL, expires_at timestamptz NOT NULL);
@@ -25,7 +25,7 @@ CREATE TABLE billing.ledger (
 CREATE TABLE billing.purchases (
  environment text NOT NULL, transaction_id text NOT NULL, customer_id uuid NOT NULL REFERENCES billing.customers,
  product_id text NOT NULL, credits integer NOT NULL, revoked boolean NOT NULL DEFAULT false,
- signed_at bigint NOT NULL, PRIMARY KEY(environment,transaction_id)
+ signed_at bigint NOT NULL, refund_generation integer NOT NULL DEFAULT 0 CHECK(refund_generation>=0), PRIMARY KEY(environment,transaction_id)
 );
 CREATE TABLE billing.requests (
  customer_id uuid NOT NULL, environment text NOT NULL, request_id uuid NOT NULL,

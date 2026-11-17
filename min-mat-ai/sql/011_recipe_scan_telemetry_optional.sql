@@ -1,0 +1,4 @@
+-- Optional telemetry database only (NOT billing database). Use after confirming
+-- the exact constraint name from pg_constraint, and back up first.
+-- Existing SQL 001 may have a feature CHECK limiting values to four features.
+-- Do not blindly drop constraints on live tables. Deploy after DBA review.
